@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "evolve.yaml.injection",
+  "injectionSelector": "L:source.yaml",
+  "patterns": [
+    {
+      "name": "meta.embedded.block.python",
+      "begin": "(?:^|\\G)([ \\t]*)(code)(:)[ \\t]*(\\|)[ \\t]*$",
+      "beginCaptures": {
+        "2": { "name": "entity.name.tag.yaml" },
+        "3": { "name": "punctuation.separator.key-value.yaml" },
+        "4": { "name": "keyword.operator.block.yaml" }
+      },
+      "end": "^(?!\\1[ \\t])|^(?=\\1[^ \\t])",
+      "contentName": "source.python",
+      "patterns": [
+        { "include": "source.python" }
+      ]
+    }
+  ]
+}

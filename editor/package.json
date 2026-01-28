@@ -1,0 +1,169 @@
+{
+  "name": "evolve-editor",
+  "displayName": "EVOLVE HLPN Editor",
+  "description": "VS Code extension for editing evolve-hlpn networks (YAML-first PNML).",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onCommand:evolve.openGraphEditor"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "evolve.openGraphEditor",
+        "title": "EVOLVE: Open Graph Editor"
+      },
+      {
+        "command": "evolve.toggleBreakpoint",
+        "title": "EVOLVE: Toggle Breakpoint at Cursor"
+      },
+      {
+        "command": "evolve.runNet",
+        "title": "EVOLVE: Run PNML",
+        "icon": {
+          "light": "media/icons/play.svg",
+          "dark": "media/icons/play-dark.svg"
+        }
+      },
+      {
+        "command": "evolve.debugNet",
+        "title": "EVOLVE: Debug PNML",
+        "icon": {
+          "light": "media/icons/debug.svg",
+          "dark": "media/icons/debug-dark.svg"
+        }
+      },
+      {
+        "command": "evolve.showRunMenu",
+        "title": "EVOLVE: Run / Debug Menu",
+        "icon": {
+          "light": "media/icons/chevron-down.svg",
+          "dark": "media/icons/chevron-down-dark.svg"
+        }
+      },
+      {
+        "command": "evolve.openInscriptionEditor",
+        "title": "EVOLVE: Open Inscription Editor"
+      },
+      {
+        "command": "evolve.openInscriptionAtCursor",
+        "title": "EVOLVE: Open Inscription at Cursor"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "evolve.runNet",
+          "when": "resourceFilename =~ /.*\\.(pnml|evolve)\\.yaml$/",
+          "group": "navigation",
+          "icon": {
+            "light": "media/icons/play.svg",
+            "dark": "media/icons/play-dark.svg"
+          }
+        },
+        {
+          "command": "evolve.showRunMenu",
+          "when": "resourceFilename =~ /.*\\.(pnml|evolve)\\.yaml$/",
+          "group": "navigation",
+          "icon": {
+            "light": "media/icons/chevron-down.svg",
+            "dark": "media/icons/chevron-down-dark.svg"
+          }
+        }
+      ]
+    },
+    "breakpoints": [
+      {
+        "language": "yaml"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "evolve-pnml",
+        "label": "EVOLVE PNML Debugger",
+        "languages": [
+          "yaml"
+        ],
+        "runtime": "python",
+        "program": "../enginepy/pnml_dap.py",
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the PNML/YAML file to debug"
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "Run without debugging"
+              }
+            },
+            "required": [
+              "program"
+            ]
+          }
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "evolve.yaml.injection",
+        "path": "./syntaxes/evolve-yaml-injection.json",
+        "injectTo": [
+          "source.yaml"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "EVOLVE",
+      "properties": {
+        "evolve.copilot.defaultModel": {
+          "type": "string",
+          "default": "grok-code-fast-1",
+          "description": "Default Copilot chat model id to use for vscode_bridge.chat. If empty, the extension uses the first available Copilot model."
+        },
+        "evolve.runBridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable run-mode VS Code interop bridge for inscriptions (WebSocket)."
+        },
+        "evolve.runBridge.port": {
+          "type": "number",
+          "default": 0,
+          "description": "Fixed port for run-mode bridge. Use 0 to select a random available port."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "test:compile": "tsc -p ./test/tsconfig.json",
+    "pretest": "npm run build && npm run test:compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "ws": "^8.18.0",
+    "yaml": "^2.4.5",
+    "yaml-language-server": "^1.13.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^20.10.6",
+    "@types/ws": "^8.5.10",
+    "@vscode/test-electron": "^2.2.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.4.5"
+  }
+}

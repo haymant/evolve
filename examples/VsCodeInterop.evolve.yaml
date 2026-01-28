@@ -1,0 +1,39 @@
+pnml:
+  net:
+    - id: vscode_interop_demo
+      page:
+        - id: page1
+          
+          place:
+            - id: p1
+              marking: [1]
+            - id: p2
+          
+          # Example 1: Show message in VS Code
+          transition:
+            - id: t1
+              arcs:
+                - id: a1
+                  source: p1
+                  target: t1
+                - id: a2
+                  source: t1
+                  target: p2
+              inscriptions:
+                - id: expr1
+                  language: python
+                  kind: expression
+                  source: inline
+                  code: |
+                    from enginepy import vscode_bridge
+                    try:
+                        vscode_bridge.show_message("Transition t1 fired!", "info")
+                        print("Message sent to VS Code")
+                        
+                        # Test chat (placeholder response for now)
+                        response = vscode_bridge.chat("What is 2+2?")
+                        print(f"Copilot says: {response}")
+                    except RuntimeError as e:
+                        print(f"Bridge not available: {e}")
+                        print("(This is expected in run mode)")
+

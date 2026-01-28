@@ -1,0 +1,47 @@
+pnml:
+  net:
+    - id: house
+      type: "https://evolve.dev/pnml/hlpn/evolve-2009"
+      page:
+        - id: page1
+          name:
+            text: House Model
+          place:
+            - id: p1
+              name:
+                text: Room1
+              evolve:
+                initialTokens:
+                  - value: Red
+            - id: p2
+              name:
+                text: Room2
+              evolve:
+                initialTokens:
+                  - value: Blue
+          transition:
+            - id: t1
+              name:
+                text: MoveToRoom2
+              evolve:
+                inscriptions:
+                  - id: in1
+                    language: python
+                    kind: guard
+                    source: inline
+                    code: |
+                      (lambda d: 
+                        d > 101)(102)
+                  - id: in2
+                    language: python
+                    kind: expression
+                    source: inline
+                    code: |
+                      print("Moving from Room1 to Room2")
+          arc:
+            - id: a1
+              source: p1
+              target: t1
+            - id: a2
+              source: t1
+              target: p2

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vscode-test/
+out/
+*.js.map
+.vscode/evolve*
+__pycache__/
+draft/
+.tmp*

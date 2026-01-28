@@ -1,0 +1,12 @@
+{
+  "yaml.schemas": {
+    "file:///home/data/git/haymant/evolve/schema/pnml.schema": [
+      "*.evolve.yaml",
+      "*.evolve.yml",
+      "examples/*.evolve.yaml",
+      "**/*.evolve.yaml"
+    ]
+  },
+  "yaml.validate": true,
+  "yaml.format.enable": true
+}

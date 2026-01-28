@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-evolvels",
+      "type": "shell",
+      "command": "npm",
+      "args": ["--prefix", "evolvels", "run", "build"],
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "build-editor",
+      "type": "shell",
+      "command": "npm",
+      "args": ["--prefix", "editor", "run", "build"],
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    }
+  ]
+}

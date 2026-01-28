@@ -1,0 +1,1120 @@
+{
+  "$id": "https://example.com/schemas/pnml-evolve-hlpn-2009.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PNML HLPN EVOLVE (2009) — JSON Schema",
+  "description": "JSON Schema that mirrors the structural scope of the PNML Core Model RELAX NG grammar (pnmlcoremodel.rng, PNML 2009) and adds the EVOLVE HLPN extension profile. The schema validates a JSON representation of PNML (XML) where XML attributes are represented using an '@' prefix (e.g., '@id'). EVOLVE extensions are represented as structured objects under the 'evolve' property on net/place/transition/arc/page and correspond to PNML <toolspecific> blocks scoped to the EVOLVE net type. This document is self-contained: it defines core PNML elements, graphics, toolspecific blocks, and EVOLVE-specific declarations, inscriptions (multi-language), transition kinds (compute/db/etl/llm/manual/http/script), and token schema references (e.g., visual-page JSON schemas).",
+  "$comment": "RNG→JSON Schema mapping used here: (1) XML elements map to JSON objects. (2) XML attributes map to string/number properties prefixed with '@'. (3) RNG <choice> maps to JSON Schema oneOf. (4) RNG <optional> becomes an optional property. (5) RNG <oneOrMore>/<zeroOrMore> become arrays with minItems=1 or optional arrays. (6) RNG <interleave> indicates order-insensitive subelements; JSON objects are unordered, so we model interleaves as independent optional/required properties. Limitations: JSON Schema cannot enforce XML ID uniqueness, IDREF correctness, or cycle constraints; those constraints are preserved as descriptive text.",
+  "type": "object",
+  "properties": {
+    "pnml": {
+      "$ref": "#/$defs/pnml"
+    }
+  },
+  "required": [
+    "pnml"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "pnml": {
+      "type": "object",
+      "description": "A PNML document consists of one or more Petri nets.",
+      "properties": {
+        "@xmlns": {
+          "type": "string",
+          "const": "http://www.pnml.org/version-2009/grammar/pnml",
+          "description": "Namespace of the PNML document (the RELAX NG grammar namespace)."
+        },
+        "net": {
+          "type": "array",
+          "description": "One or more Petri nets.",
+          "items": {
+            "$ref": "#/$defs/net"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "net"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "pnml": {
+            "net": [
+              {
+                "id": "house",
+                "type": "https://evolve.dev/pnml/hlpn/evolve-2009",
+                "page": [ { "id": "page1" } ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "net": {
+      "type": "object",
+      "description": "A net has a unique identifier (id) and refers to its Petri Net Type Definition (type). EVOLVE uses a specific HLPN net type URI. A net contains at least a top-level page; name, tool-specific information, and EVOLVE extensions may also be present.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "id": {
+          "type": "string",
+          "description": "Identifier (friendly YAML form) - maps to @id in XML representation."
+        },
+        "@type": {
+          "type": "string",
+          "const": "https://evolve.dev/pnml/hlpn/evolve-2009",
+          "description": "Net type URI for the EVOLVE HLPN profile. This identifies the EVOLVE extensions for inscriptions, transition kinds, and schema-aware tokens."
+        },
+        "type": {
+          "type": "string",
+          "const": "https://evolve.dev/pnml/hlpn/evolve-2009",
+          "description": "Net type (friendly YAML form) - maps to @type in XML representation."
+        },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "evolve": {
+          "$ref": "#/$defs/evolveNet",
+          "description": "EVOLVE extensions at net scope (declarations, schema registry, runtime defaults)."
+        },
+        "page": {
+          "type": "array",
+          "description": "One or more pages. The first page is typically the top-level page.",
+          "items": {
+            "$ref": "#/$defs/page"
+          },
+          "minItems": 1
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["@id"] }, { "required": ["id"] } ] },
+        { "anyOf": [ { "required": ["@type"] }, { "required": ["type"] } ] }
+      ],
+      "required": [
+        "page"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "id": "house",
+          "type": "https://evolve.dev/pnml/hlpn/evolve-2009",
+          "page": [
+            {
+              "id": "page1",
+              "place": [ { "id": "p1", "name": { "text": "Room1" } } ]
+            }
+          ]
+        }
+      ]
+    },
+    "page": {
+      "type": "object",
+      "description": "A page has an id. It may have a name, tool-specific information, optional graphics, and may contain zero or more net objects (including nested pages).",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "id": {
+          "type": "string",
+          "description": "Identifier (friendly YAML form) - maps to @id in XML representation."
+        },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "evolve": {
+          "$ref": "#/$defs/evolvePage",
+          "description": "EVOLVE extensions at page scope (e.g., layout metadata for editor integration)."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        },
+        "graphics": {
+          "$ref": "#/$defs/nodeGraphics",
+          "description": "Optional page graphics. In the core model, page graphics use the same structure as node graphics."
+        },
+        "page": {
+          "type": "array",
+          "description": "Nested pages.",
+          "items": {
+            "$ref": "#/$defs/page"
+          }
+        },
+        "place": {
+          "type": "array",
+          "description": "Place nodes contained in this page.",
+          "items": {
+            "$ref": "#/$defs/place"
+          }
+        },
+        "transition": {
+          "type": "array",
+          "description": "Transition nodes contained in this page.",
+          "items": {
+            "$ref": "#/$defs/transition"
+          }
+        },
+        "referencePlace": {
+          "type": "array",
+          "description": "Reference places contained in this page.",
+          "items": {
+            "$ref": "#/$defs/referencePlace"
+          }
+        },
+        "referenceTransition": {
+          "type": "array",
+          "description": "Reference transitions contained in this page.",
+          "items": {
+            "$ref": "#/$defs/referenceTransition"
+          }
+        },
+        "arc": {
+          "type": "array",
+          "description": "Arcs contained in this page.",
+          "items": {
+            "$ref": "#/$defs/arc"
+          }
+        }
+      },
+      "anyOf": [
+        { "required": ["@id"] },
+        { "required": ["id"] }
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "id": "page1",
+          "place": [ { "id": "p1" } ],
+          "transition": [ { "id": "t1" } ]
+        }
+      ]
+    },
+
+    "place": {
+      "type": "object",
+      "description": "A place is a node with an id. In the core model it may have a name, tool-specific information, and optional node graphics.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "id": { "type": "string", "description": "Identifier (friendly YAML form) - maps to @id." },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "evolve": {
+          "$ref": "#/$defs/evolvePlace",
+          "description": "EVOLVE extensions for token schemas, initial tokens, and UI-driven token formats."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        },
+        "graphics": {
+          "$ref": "#/$defs/nodeGraphics",
+          "description": "Optional node graphics."
+        }
+      },
+      "anyOf": [
+        { "required": ["@id"] },
+        { "required": ["id"] }
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "id": "p1",
+          "name": { "text": "Room1" },
+          "evolve": { "initialTokens": [ { "value": "Red" } ] }
+        }
+      ]
+    },
+
+    "transition": {
+      "type": "object",
+      "description": "A transition is a node with an id. In the core model it may have a name, tool-specific information, and optional node graphics.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "id": { "type": "string", "description": "Identifier (friendly YAML form) - maps to @id." },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "evolve": {
+          "$ref": "#/$defs/evolveTransition",
+          "description": "EVOLVE extensions defining transition kind, multi-language inscriptions, and runtime integration (e.g., manual UI steps, LLM calls)."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        },
+        "graphics": {
+          "$ref": "#/$defs/nodeGraphics",
+          "description": "Optional node graphics."
+        }
+      },
+      "anyOf": [
+        { "required": ["@id"] },
+        { "required": ["id"] }
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "id": "t1",
+          "name": { "text": "MoveToRoom2" },
+          "evolve": {
+            "inscriptions": [
+              { "language": "python", "kind": "guard", "source": "inline", "code": "lambda d: d['id'] > 101" }
+            ]
+          }
+        }
+      ]
+    },
+
+    "referencePlace": {
+      "type": "object",
+      "description": "A reference place is a reference node (i.e., a node that references another place or reference place).\n\nValidation notes (not enforceable in JSON Schema): ref must refer to the id of a place or referencePlace; must not refer to itself; must not create cycles of reference places.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "@ref": {
+          "$ref": "#/$defs/xmlIdRef",
+          "description": "Reference (XML IDREF) to another place or referencePlace."
+        },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        },
+        "graphics": {
+          "$ref": "#/$defs/nodeGraphics",
+          "description": "Optional node graphics."
+        }
+      },
+      "required": [
+        "@id",
+        "@ref"
+      ],
+      "additionalProperties": false
+    },
+    "referenceTransition": {
+      "type": "object",
+      "description": "A reference transition is a reference node (i.e., a node that references another transition or referenceTransition).\n\nValidation notes (not enforceable in JSON Schema): ref must refer to the id of a transition or referenceTransition; must not refer to itself; must not create cycles of reference transitions.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "@ref": {
+          "$ref": "#/$defs/xmlIdRef",
+          "description": "Reference (XML IDREF) to another transition or referenceTransition."
+        },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        },
+        "graphics": {
+          "$ref": "#/$defs/nodeGraphics",
+          "description": "Optional node graphics."
+        }
+      },
+      "required": [
+        "@id",
+        "@ref"
+      ],
+      "additionalProperties": false
+    },
+    "arc": {
+      "type": "object",
+      "description": "An arc has an id and refers to a source node and target node by IDREF. In general, arcs connect places to transitions (and vice versa). An arc may have an optional name, optional edge graphics, and tool-specific information.",
+      "properties": {
+        "@id": {
+          "$ref": "#/$defs/xmlId",
+          "description": "Identifier (XML ID). Must be unique within the document."
+        },
+        "id": { "type": "string", "description": "Identifier (friendly YAML form) - maps to @id." },
+        "@source": {
+          "$ref": "#/$defs/xmlIdRef",
+          "description": "Source node id reference (XML IDREF)."
+        },
+        "source": { "type": "string", "description": "Source node id (friendly YAML form) - maps to @source." },
+        "@target": {
+          "$ref": "#/$defs/xmlIdRef",
+          "description": "Target node id reference (XML IDREF)."
+        },
+        "target": { "type": "string", "description": "Target node id (friendly YAML form) - maps to @target." },
+        "name": {
+          "$ref": "#/$defs/nameLabel",
+          "description": "User-provided name label for this element."
+        },
+        "evolve": {
+          "$ref": "#/$defs/evolveArc",
+          "description": "EVOLVE extensions for inscriptions with language metadata and optional weights."
+        },
+        "graphics": {
+          "$ref": "#/$defs/edgeGraphics",
+          "description": "Optional edge graphics."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information. The internal structure is tool-defined.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["@id"] }, { "required": ["id"] } ] },
+        { "anyOf": [ { "required": ["@source"] }, { "required": ["source"] } ] },
+        { "anyOf": [ { "required": ["@target"] }, { "required": ["target"] } ] }
+      ],
+      "additionalProperties": false,
+      "examples": [
+        { "id": "a1", "source": "p1", "target": "t1" }
+      ]
+    },
+    "nameLabel": {
+      "type": "object",
+      "description": "Label definition for a user-given name of an element. Structurally: (optional) text + (optional) graphics + (optional) toolspecific. Example: { \"text\": \"Room 1\" }.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text value of the label. If omitted, tools may apply a default."
+        },
+        "graphics": {
+          "$ref": "#/$defs/annotationGraphics",
+          "description": "Optional graphical information for the label."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information for this label.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        {
+          "text": "Room 1"
+        }
+      ]
+    },
+    "simpleTextLabel": {
+      "type": "object",
+      "description": "A simple text label is an annotation containing arbitrary text. It behaves like an attribute on a net object. It may contain: optional text, optional graphics, and zero or more toolspecific blocks.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text value of the annotation."
+        },
+        "graphics": {
+          "$ref": "#/$defs/annotationGraphics",
+          "description": "Optional graphics for the annotation."
+        },
+        "toolspecific": {
+          "type": "array",
+          "description": "Tool-specific information for this annotation.",
+          "items": {
+            "$ref": "#/$defs/toolspecific"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodeGraphics": {
+      "type": "object",
+      "description": "Node graphics. Requires one position. May additionally provide dimension, fill, and line.",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/position",
+          "description": "Cartesian coordinates of the node."
+        },
+        "dimension": {
+          "$ref": "#/$defs/dimension",
+          "description": "Optional size of the node (width/height)."
+        },
+        "fill": {
+          "$ref": "#/$defs/fill",
+          "description": "Optional interior color / gradient / image."
+        },
+        "line": {
+          "$ref": "#/$defs/line",
+          "description": "Optional line styling."
+        }
+      },
+      "required": [
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "edgeGraphics": {
+      "type": "object",
+      "description": "Edge graphics. May provide zero or more position waypoints and an optional line style.",
+      "properties": {
+        "position": {
+          "type": "array",
+          "description": "Zero or more Cartesian waypoints along the arc.",
+          "items": {
+            "$ref": "#/$defs/position"
+          }
+        },
+        "line": {
+          "$ref": "#/$defs/line",
+          "description": "Optional line styling for the edge."
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotationGraphics": {
+      "type": "object",
+      "description": "Annotation graphics. Requires one offset describing the offset from the annotated net object. May additionally provide fill, line, and font.",
+      "properties": {
+        "offset": {
+          "$ref": "#/$defs/offset",
+          "description": "Offset relative to the reference point of the annotated net object."
+        },
+        "fill": {
+          "$ref": "#/$defs/fill",
+          "description": "Optional fill styling."
+        },
+        "line": {
+          "$ref": "#/$defs/line",
+          "description": "Optional line styling."
+        },
+        "font": {
+          "$ref": "#/$defs/font",
+          "description": "Optional font styling."
+        }
+      },
+      "required": [
+        "offset"
+      ],
+      "additionalProperties": false
+    },
+    "position": {
+      "type": "object",
+      "description": "A position element describes Cartesian coordinates. Coordinates are decimals in an xy-system where x increases left→right and y increases top→bottom.",
+      "properties": {
+        "@x": {
+          "type": "number",
+          "description": "X coordinate (decimal)."
+        },
+        "x": {
+          "type": "number",
+          "description": "X coordinate (friendly YAML form)."
+        },
+        "@y": {
+          "type": "number",
+          "description": "Y coordinate (decimal)."
+        },
+        "y": {
+          "type": "number",
+          "description": "Y coordinate (friendly YAML form)."
+        }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["@x"] }, { "required": ["x"] } ] },
+        { "anyOf": [ { "required": ["@y"] }, { "required": ["y"] } ] }
+      ],
+      "additionalProperties": false,
+      "examples": [ { "x": 10, "y": 20 } ]
+    },
+
+    "offset": {
+      "type": "object",
+      "description": "An offset element describes Cartesian coordinates (same coordinate semantics as position).",
+      "properties": {
+        "@x": {
+          "type": "number",
+          "description": "X offset (decimal)."
+        },
+        "x": { "type": "number", "description": "X offset (friendly YAML form)." },
+        "@y": {
+          "type": "number",
+          "description": "Y offset (decimal)."
+        },
+        "y": { "type": "number", "description": "Y offset (friendly YAML form)." }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["@x"] }, { "required": ["x"] } ] },
+        { "anyOf": [ { "required": ["@y"] }, { "required": ["y"] } ] }
+      ],
+      "additionalProperties": false
+    },
+    "dimension": {
+      "type": "object",
+      "description": "A dimension describes width (x) and height (y). In the RNG this is restricted to positive decimals with totalDigits=4 and fractionDigits=1 (range (0, 999.9]).",
+      "properties": {
+        "@x": {
+          "$ref": "#/$defs/positiveDecimal",
+          "description": "Width (positive decimal)."
+        },
+        "x": { "$ref": "#/$defs/positiveDecimal", "description": "Width (friendly YAML form)." },
+        "@y": {
+          "$ref": "#/$defs/positiveDecimal",
+          "description": "Height (positive decimal)."
+        },
+        "y": { "$ref": "#/$defs/positiveDecimal", "description": "Height (friendly YAML form)." }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["@x"] }, { "required": ["x"] } ] },
+        { "anyOf": [ { "required": ["@y"] }, { "required": ["y"] } ] }
+      ],
+      "additionalProperties": false,
+      "examples": [ { "x": 100.0, "y": 50.0 } ]
+    },
+
+    "positiveDecimal": {
+      "type": "number",
+      "description": "Restricted positive decimal: > 0, up to 999.9, with one fractional digit. (Approximation of the RNG totalDigits/fractionDigits constraints.)",
+      "exclusiveMinimum": 0,
+      "maximum": 999.9,
+      "multipleOf": 0.1
+    },
+    "fill": {
+      "type": "object",
+      "description": "A fill describes interior color, optional gradient color and rotation. If an image is present, other attributes are typically ignored by tools.",
+      "properties": {
+        "@color": {
+          "$ref": "#/$defs/color",
+          "description": "Interior color (CSS-like color string)."
+        },
+        "@gradient-color": {
+          "$ref": "#/$defs/color",
+          "description": "Gradient color (CSS-like color string)."
+        },
+        "@gradient-rotation": {
+          "type": "string",
+          "enum": [
+            "vertical",
+            "horizontal",
+            "diagonal"
+          ],
+          "description": "Gradient rotation direction."
+        },
+        "@image": {
+          "type": "string",
+          "format": "uri",
+          "description": "Image URI. When provided, tools may ignore other fill attributes."
+        }
+      },
+      "additionalProperties": false
+    },
+    "line": {
+      "type": "object",
+      "description": "A line describes shape, color, width, and style.",
+      "properties": {
+        "@shape": {
+          "type": "string",
+          "enum": [
+            "line",
+            "curve"
+          ],
+          "description": "Shape of the line."
+        },
+        "@color": {
+          "$ref": "#/$defs/color",
+          "description": "Line color (CSS-like color string)."
+        },
+        "@width": {
+          "$ref": "#/$defs/positiveDecimal",
+          "description": "Line width (positive decimal)."
+        },
+        "@style": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dash",
+            "dot"
+          ],
+          "description": "Line style."
+        }
+      },
+      "additionalProperties": false
+    },
+    "font": {
+      "type": "object",
+      "description": "A font describes font properties, decoration, alignment, and rotation for annotation text. Font family/style/weight/size are typically CSS-compatible strings.",
+      "properties": {
+        "@family": {
+          "type": "string",
+          "description": "Font family (CSS-like)."
+        },
+        "@style": {
+          "type": "string",
+          "description": "Font style (CSS-like)."
+        },
+        "@weight": {
+          "type": "string",
+          "description": "Font weight (CSS-like)."
+        },
+        "@size": {
+          "type": "string",
+          "description": "Font size (CSS-like)."
+        },
+        "@decoration": {
+          "type": "string",
+          "enum": [
+            "underline",
+            "overline",
+            "line-through"
+          ],
+          "description": "Text decoration."
+        },
+        "@align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "description": "Text alignment."
+        },
+        "@rotation": {
+          "type": "number",
+          "description": "Rotation angle (decimal)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolspecific": {
+      "type": "object",
+      "description": "Tool-specific information refers to a tool and its version; the internal structure is up to the tool.",
+      "properties": {
+        "@tool": {
+          "type": "string",
+          "description": "Tool identifier/name."
+        },
+        "@version": {
+          "type": "string",
+          "description": "Tool version."
+        },
+        "anyElement": {
+          "type": "array",
+          "description": "Arbitrary tool-specific subelements (extensions).",
+          "items": {
+            "$ref": "#/$defs/anyElement"
+          }
+        }
+      },
+      "required": [
+        "@tool",
+        "@version"
+      ],
+      "additionalProperties": false
+    },
+    "anyElement": {
+      "type": "object",
+      "description": "Arbitrary foreign element content for extensions. The core model allows these within toolspecific blocks.",
+      "additionalProperties": true
+    },
+    "color": {
+      "type": "string",
+      "description": "Color string (commonly CSS2/CSS-like)."
+    },
+    "xmlId": {
+      "type": "string",
+      "description": "XML ID (xs:ID). JSON Schema cannot enforce uniqueness across the entire document.",
+      "minLength": 1
+    },
+    "xmlIdRef": {
+      "type": "string",
+      "description": "XML IDREF (xs:IDREF). JSON Schema cannot ensure the referenced ID exists.",
+      "minLength": 1
+    },
+    "evolveNet": {
+      "type": "object",
+      "description": "EVOLVE net-level extensions, aligned with HLPN concepts and execution metadata.",
+      "properties": {
+        "declarations": {
+          "$ref": "#/$defs/evolveDeclarations",
+          "description": "HLPN-style declarations (color sets, variables, functions)."
+        },
+        "schemaRegistry": {
+          "type": "array",
+          "description": "Registry of JSON Schemas referenced by tokens or transitions.",
+          "items": {
+            "$ref": "#/$defs/evolveSchemaRef"
+          }
+        },
+        "runtime": {
+          "$ref": "#/$defs/evolveRuntime",
+          "description": "Runtime defaults and execution environment configuration."
+        }
+      },
+      "additionalProperties": false
+    },
+    "evolvePage": {
+      "type": "object",
+      "description": "EVOLVE page-level editor metadata for layout and grouping.",
+      "properties": {
+        "layout": {
+          "type": "string",
+          "enum": ["free", "grid", "layered"],
+          "description": "Preferred editor layout algorithm hint."
+        },
+        "groups": {
+          "type": "array",
+          "description": "Optional page grouping metadata for editor use.",
+          "items": {
+            "$ref": "#/$defs/evolveGroup"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evolvePlace": {
+      "type": "object",
+      "description": "EVOLVE place-level extensions for typed tokens and UI-aware payloads.",
+      "properties": {
+        "tokenSchemaRef": {
+          "type": "string",
+          "description": "Reference to a schemaRegistry id that validates tokens in this place."
+        },
+        "tokenFormat": {
+          "type": "string",
+          "enum": ["json", "yaml", "text", "binary"],
+          "description": "Token serialization format used by the runtime."
+        },
+        "tokenKind": {
+          "type": "string",
+          "enum": ["data", "ui", "pipeline", "custom"],
+          "description": "Semantic kind of token payloads (e.g., UI page schema or pipeline payload)."
+        },
+        "initialTokens": {
+          "type": "array",
+          "description": "Optional initial tokens (engine-specific payload objects).",
+          "items": {
+            "$ref": "#/$defs/evolveToken"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        {
+          "tokenSchemaRef": "pageSchema",
+          "tokenFormat": "json",
+          "initialTokens": [ { "value": { "page": { "title": "Welcome" } } } ]
+        }
+      ]
+    },
+
+    "evolveTransition": {
+      "type": "object",
+      "description": "EVOLVE transition-level extensions for transition kinds, inscriptions, and runtime actions.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["compute", "db", "etl", "llm", "manual", "http", "script"],
+          "description": "Execution kind of the transition."
+        },
+        "inscriptions": {
+          "type": "array",
+          "description": "Multi-language inscriptions or guards for this transition.",
+          "items": {
+            "$ref": "#/$defs/evolveInscription"
+          }
+        },
+        "action": {
+          "$ref": "#/$defs/evolveAction",
+          "description": "Kind-specific action configuration."
+        },
+        "manual": {
+          "$ref": "#/$defs/evolveManual",
+          "description": "Manual transition configuration for UI-driven steps."
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        {
+          "kind": "compute",
+          "inscriptions": [ { "language": "python", "kind": "expression", "source": "inline", "code": "|d| d.id + 1" } ]
+        }
+      ]
+    },
+
+    "evolveArc": {
+      "type": "object",
+      "description": "EVOLVE arc-level extensions for inscriptions with language metadata and optional weights.",
+      "properties": {
+        "inscription": {
+          "$ref": "#/$defs/evolveInscription",
+          "description": "Arc inscription with explicit language metadata."
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional weight for arcs (engine-specific)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "evolveDeclarations": {
+      "type": "object",
+      "description": "HLPN-style declarations for color sets, variables, and functions.",
+      "properties": {
+        "colorSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evolveColorSet"
+          }
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evolveVariable"
+          }
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evolveFunction"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evolveColorSet": {
+      "type": "object",
+      "description": "Color set definition for tokens (compatible with HLPN concepts).",
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["primitive", "record", "enum", "list", "map", "multiset"],
+          "description": "Structural kind of the color set."
+        },
+        "definition": {
+          "type": "string",
+          "description": "Human-readable or DSL definition of the color set."
+        },
+        "schemaRef": {
+          "type": "string",
+          "description": "Optional schemaRegistry id for JSON-structured color sets."
+        }
+      },
+      "required": ["name", "kind"],
+      "additionalProperties": false
+    },
+    "evolveVariable": {
+      "type": "object",
+      "description": "Variable declaration with a reference to a color set.",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": false
+    },
+    "evolveFunction": {
+      "type": "object",
+      "description": "Function declaration for inscriptions/guards (language-agnostic signature).",
+      "properties": {
+        "name": { "type": "string" },
+        "signature": { "type": "string" },
+        "language": {
+          "type": "string",
+          "enum": ["rust", "typescript", "python"]
+        },
+        "code": { "type": "string" }
+      },
+      "required": ["name", "signature"],
+      "additionalProperties": false
+    },
+    "evolveSchemaRef": {
+      "type": "object",
+      "description": "Reference to a JSON Schema used by tokens or transitions.",
+      "properties": {
+        "id": { "type": "string" },
+        "uri": { "type": "string", "format": "uri" },
+        "purpose": {
+          "type": "string",
+          "enum": ["token", "visual-page", "pipeline", "custom"]
+        },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "uri"],
+      "additionalProperties": false
+    },
+    "evolveRuntime": {
+      "type": "object",
+      "description": "Execution runtime defaults for EVOLVE nets.",
+      "properties": {
+        "defaultLanguage": {
+          "type": "string",
+          "enum": ["rust", "typescript", "python"]
+        },
+        "golem": {
+          "$ref": "#/$defs/evolveGolem",
+          "description": "Golem durable execution configuration."
+        }
+      },
+      "additionalProperties": false
+    },
+    "evolveGolem": {
+      "type": "object",
+      "description": "Golem Cloud execution metadata for durable workflows.",
+      "properties": {
+        "componentId": { "type": "string" },
+        "workerType": { "type": "string" },
+        "durable": { "type": "boolean" },
+        "stateStore": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "evolveAction": {
+      "type": "object",
+      "description": "Kind-specific action configuration.",
+      "properties": {
+        "handler": { "type": "string", "description": "Identifier of the runtime handler or adapter." },
+        "config": { "type": "object", "description": "Free-form configuration for the handler.", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "evolveManual": {
+      "type": "object",
+      "description": "Manual transition configuration handled by a UI route.",
+      "properties": {
+        "route": { "type": "string" },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH"] },
+        "inputSchemaRef": { "type": "string" },
+        "outputSchemaRef": { "type": "string" },
+        "uiSchemaRef": { "type": "string" },
+        "tokenMode": {
+          "type": "string",
+          "enum": ["page", "params"],
+          "description": "Whether the UI renders a page token or uses parameters from a place token."
+        }
+      },
+      "required": ["route"],
+      "additionalProperties": false
+    },
+    "evolveInscription": {
+      "type": "object",
+      "description": "Inscription or guard with explicit language metadata. Supports inline code or external references and optional metadata useful for tooling and safe execution (e.g., signature, timeout, sandboxing).",
+      "properties": {
+        "id": { "type": "string", "description": "Optional local id for the inscription (useful for references and tooling)." },
+        "language": {
+          "type": "string",
+          "enum": ["rust", "typescript", "python"],
+          "description": "Language of the inscription (affects tooling and runtime)."
+        },
+        "languageVersion": { "type": "string", "description": "Optional language/runtime version (e.g., '1.70' for Rust)." },
+        "kind": {
+          "type": "string",
+          "enum": ["inscription", "guard", "expression"],
+          "description": "Semantic role of the inscription (affects how it is used by the engine)."
+        },
+        "execMode": {
+          "type": "string",
+          "enum": ["sync", "async"],
+          "description": "Execution mode for the inscription. Defaults to sync if omitted."
+        },
+        "source": {
+          "type": "string",
+          "enum": ["inline", "uri"],
+          "description": "Where the code is provided: inline in the document, or referenced by URI. Defaults to 'inline' if omitted."
+        },
+        "code": { "type": "string", "description": "Inline code snippet when source='inline'." },
+        "uri": { "type": "string", "format": "uri", "description": "External URI to fetch code from when source='uri'." },
+        "signature": { "type": "string", "description": "Optional function signature or type hint to help tooling (e.g., '|d| -> bool')." },
+        "timeout": { "type": "number", "description": "Optional execution timeout in seconds for this inscription." },
+        "sandbox": {
+          "type": "object",
+          "description": "Optional sandboxing directives for execution environments.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "allowedHosts": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["language"],
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "inline" } } },
+          "then": { "required": ["code"] }
+        },
+        {
+          "if": { "properties": { "source": { "const": "uri" } } },
+          "then": { "required": ["uri"] }
+        }
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "language": "python",
+          "kind": "guard",
+          "source": "inline",
+          "code": "lambda d: d['id'] > 101"
+        }
+      ]
+    },
+    "evolveToken": {
+      "type": "object",
+      "description": "Token payload wrapper for initial tokens in EVOLVE places.",
+      "properties": {
+        "value": { "description": "Token payload.", "type": ["object", "array", "string", "number", "boolean", "null"] },
+        "schemaRef": { "type": "string" }
+      },
+      "required": ["value"],
+      "additionalProperties": false,
+      "examples": [
+        { "value": "Red" },
+        { "value": { "id": 1, "name": "payload" } }
+      ]
+    },
+    "evolveGroup": {
+      "type": "object",
+      "description": "Editor grouping metadata for page layout.",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "members": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  }
+}
