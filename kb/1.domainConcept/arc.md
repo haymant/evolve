@@ -16,3 +16,18 @@
  - If source is a place and target is a transition, the arc is an input arc.
  - If source is a transition and target is a place, the arc is an output arc.
  - No weights, inhibitor arcs, or arc-specific token expressions are implemented.
+
+## Code references
+- IO mapping logic: [_build_io_maps](enginepy/pnml_engine.py)
+- Arc parsing: [enginepy/pnml_parser.py](enginepy/pnml_parser.py)
+
+## Example (YAML)
+```yaml
+arc:
+  - id: a1
+    source: p1
+    target: t1
+  - id: a2
+    source: t1
+    target: p2
+```

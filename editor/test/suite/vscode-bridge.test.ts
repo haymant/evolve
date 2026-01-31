@@ -2,6 +2,15 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { suite, test } from 'mocha';
+const extension = require('../../../dist/extension');
+
+async function activateExtension(): Promise<void> {
+  const ext = vscode.extensions.all.find((item) => item.packageJSON?.name === 'evolve-editor');
+  if (!ext) {
+    throw new Error('Extension evolve-editor not found');
+  }
+  await ext.activate();
+}
 
 suite('VSCode Bridge Integration Tests', () => {
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
@@ -85,6 +94,83 @@ suite('VSCode Bridge Integration Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 100));
     
     assert.ok(true, 'Message commands executed without errors');
+  });
+
+  test('Slash command /jobs renders pending metadata', async function() {
+    this.timeout(5000);
+    await activateExtension();
+    extension.__setChatModelsOverride(async () => [{ id: 'test-model' }]);
+    const store = extension.__getPendingOpsStore();
+    assert.ok(store, 'Pending ops store should be available');
+
+    store!.registerStarted({
+      operationId: 'op-jobs-1',
+      transitionId: 'tJobs',
+      transitionName: 'Jobs Test',
+      transitionDescription: 'Desc',
+      status: 'pending',
+      runId: 'run-jobs',
+      netId: 'net-jobs',
+      resumeToken: 'token-jobs',
+      createdAt: Date.now() - 1000,
+      timeoutMs: 5000
+    });
+
+    try {
+      const response = await extension.__handleSlashCommandForTests('jobs', '');
+      assert.ok(response.includes('Jobs Test'));
+      assert.ok(response.includes('token-jobs'));
+      assert.ok(response.includes('run-jobs'));
+    } finally {
+      extension.__setChatModelsOverride(undefined);
+    }
+  });
+
+  test('Slash command /submit resumes pending op by token', async function() {
+    this.timeout(5000);
+    await activateExtension();
+    extension.__setChatModelsOverride(async () => [{ id: 'test-model' }]);
+    const store = extension.__getPendingOpsStore();
+    assert.ok(store, 'Pending ops store should be available');
+
+    store!.registerStarted({
+      operationId: 'op-submit-1',
+      transitionId: 'tSubmit',
+      transitionName: 'Submit Test',
+      status: 'pending',
+      runId: 'run-submit',
+      netId: 'net-submit',
+      resumeToken: 'token-submit',
+      createdAt: Date.now()
+    });
+
+    let submitted: any;
+    extension.__setAsyncSubmitHandler(async (payload: any) => {
+      submitted = payload;
+    });
+
+    try {
+      const response = await extension.__handleSlashCommandForTests('submit', 'token-submit hello world');
+      assert.ok(response.includes('Submitted result'));
+      assert.ok(submitted);
+      assert.strictEqual(submitted.resumeToken, 'token-submit');
+    } finally {
+      extension.__setAsyncSubmitHandler(undefined);
+      extension.__setChatModelsOverride(undefined);
+    }
+  });
+
+  test('Slash command /submit rejects invalid token', async function() {
+    this.timeout(5000);
+
+    await activateExtension();
+    extension.__setChatModelsOverride(async () => [{ id: 'test-model' }]);
+    try {
+      const response = await extension.__handleSlashCommandForTests('submit', 'token-missing hello');
+      assert.ok(response.includes('Invalid resume token'));
+    } finally {
+      extension.__setChatModelsOverride(undefined);
+    }
   });
 
 

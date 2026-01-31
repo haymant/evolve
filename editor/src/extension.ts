@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import * as http from "http";
 import * as crypto from "crypto";
 import WebSocket, { WebSocketServer } from "ws";
+import { PendingOp, PendingOpsStore } from "./pendingOpsStore";
 import {
   extractInscriptions,
   updateInscriptionText,
@@ -29,13 +30,33 @@ type RunBridgeInfo = {
   port: number;
 };
 
+type AsyncSubmitPayload = {
+  operationId?: string;
+  resumeToken?: string;
+  result?: unknown;
+  error?: string | null;
+  source?: string;
+};
+
 let runBridgeServer: http.Server | undefined;
 let runBridgeSocketServer: WebSocketServer | undefined;
 let runBridgeInfo: RunBridgeInfo | undefined;
+let pendingOpsStore: PendingOpsStore | undefined;
+let pendingStatusBarItem: vscode.StatusBarItem | undefined;
+const runBridgeClients = new Set<WebSocket>();
+let asyncSubmitHandler: ((payload: AsyncSubmitPayload) => Promise<void>) | undefined;
+let selectChatModelsOverride: (() => Promise<any[]>) | undefined;
+
+const getChatModels = async (): Promise<any[]> => {
+  if (selectChatModelsOverride) {
+    return selectChatModelsOverride();
+  }
+  return (vscode as any).lm.selectChatModels({ vendor: 'copilot' });
+};
 
 const isCopilotAvailable = async (): Promise<boolean> => {
   try {
-    const models = await (vscode as any).lm.selectChatModels({ vendor: 'copilot' });
+    const models = await getChatModels();
     return Array.isArray(models) && models.length > 0;
   } catch {
     return false;
@@ -154,6 +175,129 @@ export function activate(context: vscode.ExtensionContext): void {
   client.start().then(() => {
     context.subscriptions.push({ dispose: () => client && client.stop() });
   });
+
+  pendingOpsStore = new PendingOpsStore(context);
+
+  const updatePendingStatusBar = () => {
+    if (!pendingOpsStore) return;
+    if (!pendingStatusBarItem) {
+      pendingStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+      pendingStatusBarItem.command = 'evolve.listPendingOperations';
+      context.subscriptions.push(pendingStatusBarItem);
+    }
+    const summary = pendingOpsStore.getPendingSummary();
+    pendingStatusBarItem.text = `Evolve: Pending (${summary.count})`;
+    if (summary.oldestAgeMs) {
+      pendingStatusBarItem.tooltip = `Oldest pending: ${formatDuration(summary.oldestAgeMs)}`;
+    } else {
+      pendingStatusBarItem.tooltip = 'No pending operations.';
+    }
+    pendingStatusBarItem.show();
+  };
+
+  pendingOpsStore.onDidChangePendingOps(async (evt) => {
+    updatePendingStatusBar();
+    if (evt.type === 'started') {
+      const actions: string[] = ['Open pending list'];
+      if (evt.op.operationType === 'form') {
+        actions.unshift('Resume form');
+      }
+      const selection = await vscode.window.showInformationMessage(
+        `Pending async operation: ${evt.op.transitionName || evt.op.transitionId || evt.op.operationId}`,
+        ...actions
+      );
+      if (!selection) return;
+      if (selection === 'Open pending list') {
+        void vscode.commands.executeCommand('evolve.listPendingOperations');
+      } else if (selection === 'Resume form') {
+        void vscode.commands.executeCommand('evolve.resumeForm', evt.op.operationId);
+      }
+    }
+  });
+  updatePendingStatusBar();
+
+  const listPendingCmd = vscode.commands.registerCommand('evolve.listPendingOperations', async () => {
+    if (!pendingOpsStore) return;
+    const pending = pendingOpsStore.listPending();
+    if (pending.length === 0) {
+      vscode.window.showInformationMessage('No pending operations.');
+      return;
+    }
+    const items = pending.map((op) => ({
+      label: op.transitionName || op.transitionId || op.operationId,
+      description: `run ${op.runId || '-'} · ${op.operationType || 'async'}`,
+      detail: formatPendingDetail(op),
+      op
+    }));
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select a pending operation'
+    });
+    if (!pick) return;
+    const actions = ['Submit', 'Cancel'];
+    if (pick.op.operationType === 'form') {
+      actions.unshift('Resume form');
+    }
+    const action = await vscode.window.showQuickPick(actions, {
+      placeHolder: 'Select action'
+    });
+    if (!action) return;
+    if (action === 'Resume form') {
+      await vscode.commands.executeCommand('evolve.resumeForm', pick.op.operationId);
+    } else if (action === 'Cancel') {
+      await vscode.commands.executeCommand('evolve.cancelOperation', pick.op.operationId);
+    } else {
+      await vscode.commands.executeCommand('evolve.submitOperation', pick.op.operationId);
+    }
+  });
+
+  const resumeFormCmd = vscode.commands.registerCommand('evolve.resumeForm', async (operationId?: string) => {
+    if (!pendingOpsStore) return;
+    const op = resolvePendingOperation(pendingOpsStore, operationId);
+    if (!op) return;
+    const result = await promptForResult(op, 'Enter form response (JSON or text)');
+    if (result === undefined) return;
+    await submitOperation(op, { result, source: 'form' });
+  });
+
+  const cancelOpCmd = vscode.commands.registerCommand('evolve.cancelOperation', async (operationId?: string) => {
+    if (!pendingOpsStore) return;
+    const op = resolvePendingOperation(pendingOpsStore, operationId);
+    if (!op) return;
+    await submitOperation(op, { error: 'cancelled', source: 'cancel' });
+    pendingOpsStore.markCancelled(op.operationId, 'cancelled');
+  });
+
+  const submitOpCmd = vscode.commands.registerCommand('evolve.submitOperation', async (operationId?: string, result?: unknown) => {
+    if (!pendingOpsStore) return;
+    const op = resolvePendingOperation(pendingOpsStore, operationId);
+    if (!op) return;
+    let resolved = result;
+    if (resolved === undefined) {
+      resolved = await promptForResult(op, 'Enter submit result (JSON or text)');
+    }
+    if (resolved === undefined) return;
+    await submitOperation(op, { result: resolved, source: 'manual' });
+  });
+
+  context.subscriptions.push(listPendingCmd, resumeFormCmd, cancelOpCmd, submitOpCmd);
+
+  const chat = (vscode as any).chat;
+  if (chat && typeof chat.createChatParticipant === 'function') {
+    const participant = chat.createChatParticipant('evolve', async (request: any, chatContext: any, stream: any) => {
+      const response = await handleSlashCommand(request, chatContext);
+      if (stream?.markdown) {
+        stream.markdown(response);
+      } else if (stream?.appendText) {
+        stream.appendText(response);
+      }
+    });
+    participant.commands = [
+      { name: 'jobs', description: 'List pending async operations' },
+      { name: 'submit', description: 'Submit a pending operation by resume token' }
+    ];
+    participant.description = 'EVOLVE async operations';
+    context.subscriptions.push(participant);
+  }
 
   const openGraphEditor = vscode.commands.registerCommand(
     "evolve.openGraphEditor",
@@ -660,6 +804,10 @@ export function activate(context: vscode.ExtensionContext): void {
     createDebugAdapterTracker(session: vscode.DebugSession) {
       return {
         onDidSendMessage: async (message: any) => {
+          if (message.type === 'event' && (message.event === 'asyncOperationStarted' || message.event === 'asyncOperationUpdated')) {
+            handleAsyncOperationEvent(message.event, message.body || {});
+            return;
+          }
           // Handle custom requests from DAP (initiated by Python code)
           if (message.type === 'event' && message.event === 'customRequest') {
             const body = message.body || {};
@@ -691,7 +839,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 requestId,
                 success: true,
                 result
-              }).catch((err: Error) => {
+              }).then(undefined, (err: Error) => {
                 console.error('Failed to send custom request response:', err);
               });
             } catch (error: any) {
@@ -702,7 +850,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 requestId,
                 success: false,
                 error: error.message || String(error)
-              }).catch((err: Error) => {
+              }).then(undefined, (err: Error) => {
                 console.error('Failed to send error response:', err);
               });
             }
@@ -713,6 +861,201 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   
   context.subscriptions.push(dapFactory, dapTrackerFactory);
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function formatPendingDetail(op: PendingOp): string {
+  const parts: string[] = [];
+  if (op.resumeToken) parts.push(`token: ${op.resumeToken}`);
+  if (op.runId) parts.push(`run: ${op.runId}`);
+  if (op.timeoutMs) {
+    const remaining = Math.max(0, op.timeoutMs - (Date.now() - op.createdAt));
+    parts.push(`remaining: ${formatDuration(remaining)}`);
+  }
+  return parts.join(' · ');
+}
+
+function resolvePendingOperation(store: PendingOpsStore, operationId?: string): PendingOp | undefined {
+  if (operationId) {
+    const op = store.findById(String(operationId));
+    if (!op) {
+      vscode.window.showWarningMessage('Pending operation not found.');
+    }
+    return op;
+  }
+  const pending = store.listPending();
+  if (pending.length === 1) return pending[0];
+  if (pending.length === 0) {
+    vscode.window.showInformationMessage('No pending operations.');
+    return undefined;
+  }
+  vscode.window.showInformationMessage('Multiple pending operations found. Use the pending list to select one.');
+  return undefined;
+}
+
+async function promptForResult(op: PendingOp, prompt: string): Promise<unknown | undefined> {
+  const input = await vscode.window.showInputBox({
+    prompt,
+    placeHolder: op.resumeToken ? `Token: ${op.resumeToken}` : undefined
+  });
+  if (input === undefined) return undefined;
+  if (!input) return '';
+  try {
+    return JSON.parse(input);
+  } catch {
+    return input;
+  }
+}
+
+async function submitOperation(op: PendingOp, payload: AsyncSubmitPayload): Promise<void> {
+  const submitPayload: AsyncSubmitPayload = {
+    operationId: op.operationId,
+    resumeToken: op.resumeToken,
+    result: payload.result,
+    error: payload.error ?? null,
+    source: payload.source
+  };
+  if (asyncSubmitHandler) {
+    await asyncSubmitHandler(submitPayload);
+  } else {
+    await sendAsyncSubmit(submitPayload);
+  }
+  if (pendingOpsStore && op.status === 'pending') {
+    if (submitPayload.error) {
+      pendingOpsStore.markFailed(op.operationId, submitPayload.error || 'failed');
+    } else {
+      pendingOpsStore.markCompleted(op.operationId, submitPayload.result);
+    }
+  }
+}
+
+async function sendAsyncSubmit(payload: AsyncSubmitPayload): Promise<void> {
+  const active = vscode.debug.activeDebugSession;
+  if (active && active.type === 'evolve-pnml') {
+    await active.customRequest('asyncOperationSubmit', {
+      operationId: payload.operationId,
+      resumeToken: payload.resumeToken,
+      result: payload.result,
+      error: payload.error
+    });
+    return;
+  }
+  if (runBridgeClients.size > 0) {
+    const message = JSON.stringify({
+      type: 'dapEvent',
+      event: 'asyncOperationSubmit',
+      body: {
+        operationId: payload.operationId,
+        resumeToken: payload.resumeToken,
+        result: payload.result,
+        error: payload.error
+      }
+    });
+    for (const client of runBridgeClients) {
+      client.send(message);
+    }
+  }
+}
+
+function handleAsyncOperationEvent(eventName: string, body: any): void {
+  if (!pendingOpsStore) return;
+  if (eventName === 'asyncOperationStarted') {
+    const createdAt = Number(body?.createdAt || Date.now());
+    const timeoutMsRaw =
+      body?.timeoutMs ||
+      body?.metadata?.timeout ||
+      body?.metadata?.timeoutMs ||
+      body?.metadata?.timeout_ms;
+    const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : Number(timeoutMsRaw || 0) || undefined;
+    const op: PendingOp = {
+      operationId: String(body?.operationId ?? body?.id ?? ''),
+      transitionId: body?.transitionId,
+      transitionName: body?.transitionName,
+      transitionDescription: body?.transitionDescription,
+      inscriptionId: body?.inscriptionId,
+      netId: body?.netId,
+      runId: body?.runId,
+      operationType: body?.operationType,
+      status: 'pending',
+      resumeToken: body?.resumeToken,
+      uiState: body?.uiState,
+      metadata: body?.metadata,
+      createdAt,
+      timeoutMs
+    };
+    if (!op.operationId) return;
+    pendingOpsStore.registerStarted(op);
+    return;
+  }
+  if (eventName === 'asyncOperationUpdated') {
+    const opId = String(body?.operationId ?? body?.id ?? '');
+    if (!opId) return;
+    const status = String(body?.status || 'pending') as any;
+    pendingOpsStore.updateStatus(opId, status, body?.result, body?.error);
+  }
+}
+
+function renderJobsList(pending: PendingOp[]): string {
+  if (pending.length === 0) {
+    return 'No pending operations.';
+  }
+  const lines = pending.map((op) => {
+    const remaining = op.timeoutMs ? Math.max(0, op.timeoutMs - (Date.now() - op.createdAt)) : undefined;
+    const remainingText = remaining !== undefined ? formatDuration(remaining) : 'n/a';
+    return [
+      `• ${op.transitionName || op.transitionId || op.operationId}`,
+      `  token: ${op.resumeToken || 'n/a'}`,
+      `  run: ${op.runId || 'n/a'} · net: ${op.netId || 'n/a'}`,
+      `  timeout: ${remainingText}`
+    ].join('\n');
+  });
+  return lines.join('\n');
+}
+
+async function handleSlashCommand(request: any, chatContext: any): Promise<string> {
+  if (!pendingOpsStore) {
+    return 'Pending operations store is not available.';
+  }
+  const available = await isCopilotAvailable();
+  if (!available) {
+    const summary = pendingOpsStore.getPendingSummary();
+    return `Copilot models unavailable. Check status bar: Evolve: Pending (${summary.count}).`;
+  }
+  const command = request?.command || '';
+  const prompt = (request?.prompt || request?.message || request?.text || '').toString().trim();
+  if (command === 'jobs') {
+    return renderJobsList(pendingOpsStore.listPending());
+  }
+  if (command === 'submit') {
+    const [token, ...rest] = prompt.split(/\s+/);
+    if (!token) {
+      return 'Usage: /submit <token> <message>';
+    }
+    const op = pendingOpsStore.findByToken(token);
+    if (!op) {
+      return `Invalid resume token: ${token}`;
+    }
+    const message = rest.join(' ').trim();
+    const result = {
+      message,
+      participantContext: {
+        workspace: vscode.workspace.name,
+        chatContext: chatContext || null
+      }
+    };
+    await submitOperation(op, { result, source: 'copilot' });
+    return `Submitted result for ${op.transitionName || op.operationId}.`;
+  }
+  return 'Supported commands: /jobs, /submit <token> <message>';
 }
 
 async function ensureRunBridge(): Promise<{ [key: string]: string }> {
@@ -727,12 +1070,79 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
 
+  server.on('request', (req, res) => {
+    if (!req.url) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (req.method !== 'POST' || url.pathname !== '/submit') {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+
+    const headerToken = (req.headers['x-evolve-run-bridge-token'] || req.headers['x-evolve-token'] || '').toString();
+    const authHeader = (req.headers['authorization'] || '').toString();
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
+    const providedToken = headerToken || bearer;
+    if (!providedToken || providedToken !== token) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', async () => {
+      let payload: any;
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+      const resumeToken = payload?.resumeToken;
+      const result = payload?.result;
+      if (!resumeToken) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: 'Missing resumeToken' }));
+        return;
+      }
+      if (!pendingOpsStore) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'Pending operations store not available' }));
+        return;
+      }
+      const op = pendingOpsStore.findByToken(resumeToken);
+      if (!op) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: 'Unknown resumeToken' }));
+        return;
+      }
+      if (op.status !== 'pending') {
+        res.statusCode = 409;
+        res.end(JSON.stringify({ error: 'Operation already completed' }));
+        return;
+      }
+      await submitOperation(op, { result, source: 'http' });
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, operationId: op.operationId }));
+    });
+  });
+
   wss.on('connection', (socket: WebSocket, req) => {
+    runBridgeClients.add(socket);
     const url = new URL(req.url || '/', 'http://localhost');
     const tokenParam = url.searchParams.get('token') || '';
     const sessionParam = url.searchParams.get('session') || '';
     if (tokenParam !== token || sessionParam !== sessionId) {
       socket.close(1008, 'Unauthorized');
+      runBridgeClients.delete(socket);
       return;
     }
 
@@ -742,6 +1152,10 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
         payload = JSON.parse(data.toString());
       } catch (err) {
         socket.send(JSON.stringify({ id: null, success: false, error: 'Invalid JSON' }));
+        return;
+      }
+      if (payload?.type === 'dapEvent' && payload?.event) {
+        handleAsyncOperationEvent(payload.event, payload.body || {});
         return;
       }
       const requestId = payload?.id;
@@ -765,6 +1179,10 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
       } catch (error: any) {
         socket.send(JSON.stringify({ id: requestId, success: false, error: error?.message || String(error) }));
       }
+    });
+
+    socket.on('close', () => {
+      runBridgeClients.delete(socket);
     });
   });
 
@@ -802,7 +1220,7 @@ export async function selectCopilotModel(params: any): Promise<any> {
   const configured = vscode.workspace.getConfiguration('evolve').get<string>('copilot.defaultModel', '') || '';
   const requestedModelId = requested || configured || '';
 
-  const models = await (vscode as any).lm.selectChatModels({ vendor: 'copilot' });
+  const models = await getChatModels();
   if (!Array.isArray(models) || models.length === 0) return null;
 
   if (requestedModelId) {
@@ -836,7 +1254,7 @@ async function handleChatRequest(params: any): Promise<any> {
   const message = params.message || '';
   const timeout = params.timeout || 30000;
   const conversationId = params.conversationId || `conv-${Date.now()}`;
-  const openChatOnBlocked = params.openChatOnBlocked !== false;
+  const openChatOnBlocked = false;
   
   if (!message) {
     throw new Error('Missing message parameter');
@@ -885,13 +1303,6 @@ async function handleChatRequest(params: any): Promise<any> {
       normalized.includes("off topic");
 
     if (looksBlocked) {
-      if (openChatOnBlocked) {
-        try {
-          await vscode.commands.executeCommand('workbench.action.chat.open', { query: message });
-        } catch {
-          // ignore
-        }
-      }
       return {
         response: '',
         conversationId,
@@ -995,6 +1406,26 @@ async function handleShowMessage(params: any): Promise<any> {
   }
   
   return {};
+}
+
+export function __getPendingOpsStore(): PendingOpsStore | undefined {
+  return pendingOpsStore;
+}
+
+export function __getPendingStatusText(): string | undefined {
+  return pendingStatusBarItem?.text;
+}
+
+export function __setAsyncSubmitHandler(handler?: (payload: AsyncSubmitPayload) => Promise<void>): void {
+  asyncSubmitHandler = handler;
+}
+
+export function __setChatModelsOverride(factory?: () => Promise<any[]>): void {
+  selectChatModelsOverride = factory;
+}
+
+export async function __handleSlashCommandForTests(command: string, prompt: string): Promise<string> {
+  return handleSlashCommand({ command, prompt }, null);
 }
 
 

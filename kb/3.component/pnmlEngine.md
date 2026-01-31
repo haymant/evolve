@@ -10,6 +10,16 @@
  - Guard and expression inscriptions are executed if registered.
 - execMode: async expressions pause execution and resume when AsyncResult completes.
 - Async token emission: moved input tokens are preserved and any async result is appended to output places.
+
+## Async flow (engine-level)
+```mermaid
+flowchart TD
+	Fire[Fire transition] --> Async{execMode async?}
+	Async -->|yes| Pending[Create PendingOp]
+	Pending --> Resume[resume_async]
+	Resume --> Emit[Append result token]
+	Async -->|no| Emit
+```
  
  ## Debug adapter
  - enginepy.pnml_dap.PNMLDAPServer implements the Debug Adapter Protocol.

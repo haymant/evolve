@@ -12,7 +12,7 @@ import threading
 import queue
 
 try:
-    from enginepy.pnml_engine import DebugEngine, HistoryEntry
+    from enginepy.pnml_engine import DebugEngine, HistoryEntry, PendingOp
     from enginepy.pnml_parser import extract_place_index
     from enginepy.project_gen import generate_python_project
     from enginepy.inscription_registry import clear_registry
@@ -21,7 +21,7 @@ except ImportError:
     repo_root = os.path.dirname(os.path.dirname(__file__))
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
-    from enginepy.pnml_engine import DebugEngine, HistoryEntry
+    from enginepy.pnml_engine import DebugEngine, HistoryEntry, PendingOp
     from enginepy.pnml_parser import extract_place_index
     from enginepy.project_gen import generate_python_project
     from enginepy.inscription_registry import clear_registry
@@ -86,6 +86,7 @@ class PNMLDAPServer:
         self._incoming_messages: queue.Queue = queue.Queue()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
+        self._known_pending_ops: set[int] = set()
 
     def run(self) -> None:
         while True:
@@ -143,9 +144,17 @@ class PNMLDAPServer:
             if self.engine.engine:
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    while self.engine.engine.enabled_transitions():
-                        self.engine.engine.step_once()
+                    while True:
+                        result = self.engine.engine.step_once()
+                        if result is None:
+                            break
+                        if isinstance(result, PendingOp) and not result.completed:
+                            break
+                        if not self.engine.engine.enabled_transitions():
+                            break
                 self._emit_output(buf.getvalue())
+                self._emit_marking()
+                self._emit_pending_ops()
             self._terminate()
 
     def handle_setBreakpoints(self, request: Dict[str, Any]) -> None:
@@ -307,6 +316,7 @@ class PNMLDAPServer:
             entry = self.engine.continue_run()
         self._emit_output(buf.getvalue())
         self._emit_marking()
+        self._emit_pending_ops()
         if entry and entry.line is not None:
             self.last_stop = entry
             self.last_stop_place = None
@@ -325,6 +335,7 @@ class PNMLDAPServer:
             entry = self.engine.step_once()
         self._emit_output(buf.getvalue())
         self._emit_marking()
+        self._emit_pending_ops()
         if entry is None:
             self._terminate()
             return
@@ -348,6 +359,33 @@ class PNMLDAPServer:
                 produced_places=entry.produced_places,
             )
         self.protocol.send_event("stopped", {"reason": "step", "threadId": 1})
+
+    def handle_asyncOperationSubmit(self, request: Dict[str, Any]) -> None:
+        args = request.get("arguments", {})
+        op_id = args.get("operationId")
+        resume_token = args.get("resumeToken")
+        result = args.get("result")
+        error = args.get("error")
+        if not self.engine.engine:
+            self.protocol.send_response(request)
+            return
+        if op_id is None and resume_token is None:
+            self.protocol.send_response(request)
+            return
+        try:
+            op_id_int = int(op_id) if op_id is not None else None
+        except (TypeError, ValueError):
+            op_id_int = None
+        self.engine.engine.submit_async(op_id=op_id_int, resume_token=resume_token, result=result, error=error)
+        if op_id_int is not None:
+            self._known_pending_ops.discard(op_id_int)
+        self.protocol.send_event("asyncOperationUpdated", {
+            "operationId": op_id or resume_token,
+            "status": "completed" if error is None else "failed",
+            "result": result,
+            "error": error,
+        })
+        self.protocol.send_response(request)
 
     def handle_evaluate(self, request: Dict[str, Any]) -> None:
         args = request.get("arguments", {})
@@ -500,15 +538,55 @@ class PNMLDAPServer:
             with redirect_stdout(buf):
                 entry = self.engine.continue_run()
             self._emit_output(buf.getvalue())
+            self._emit_pending_ops()
             if entry is None:
                 places = extract_place_index(self._read_program_text())
                 if places:
                     entry = HistoryEntry(step=1, transition_id=None, line=places[0].id_line, produced_places=[])
-            if entry and entry.line is not None:
+            if entry:
                 self.last_stop = entry
                 self.last_stop_place = next(iter(entry.produced_places), None)
                 self.stopped = True
-                self.protocol.send_event("stopped", {"reason": "step", "threadId": 1})
+                reason = "step" if entry.line is not None else "pause"
+                self.protocol.send_event("stopped", {"reason": reason, "threadId": 1})
+
+    def _emit_pending_ops(self) -> None:
+        if not self.engine.engine:
+            return
+        pending = self.engine.engine.pending_ops_by_id
+        if not pending:
+            self._known_pending_ops.clear()
+            return
+        for op_id, op in pending.items():
+            if op_id in self._known_pending_ops:
+                continue
+            self._known_pending_ops.add(op_id)
+            self._emit_async_operation_started(op)
+
+    def _emit_async_operation_started(self, op: PendingOp) -> None:
+        timeout_ms = None
+        if op.metadata and isinstance(op.metadata, dict):
+            raw_timeout = op.metadata.get("timeout_ms") or op.metadata.get("timeout")
+            try:
+                timeout_ms = int(raw_timeout) if raw_timeout is not None else None
+            except (TypeError, ValueError):
+                timeout_ms = None
+        body = {
+            "operationId": op.id,
+            "operationType": op.operation_type,
+            "resumeToken": op.resume_token,
+            "transitionId": op.transition_id,
+            "transitionName": op.transition_name,
+            "transitionDescription": op.transition_description,
+            "inscriptionId": op.inscription_id,
+            "netId": op.net_id,
+            "runId": op.run_id,
+            "createdAt": int(time.time() * 1000),
+            "timeoutMs": timeout_ms,
+            "uiState": op.ui_state,
+            "metadata": op.metadata,
+        }
+        self.protocol.send_event("asyncOperationStarted", body)
 
     def _terminate(self) -> None:
         self._emit_marking(final=True)

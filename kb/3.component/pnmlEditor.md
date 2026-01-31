@@ -11,3 +11,14 @@
  - Virtual inscription editor using evolve-inscription filesystem.
  - Code lenses and commands to open inscriptions.
  - Run and debug commands wired to the Python engine and debug adapter.
+
+## Inscription virtual file flow
+```mermaid
+sequenceDiagram
+	participant YAML as YAML Document
+	participant Ext as Extension
+	participant VFS as evolve-inscription
+	YAML->>Ext: Extract inscription range
+	Ext->>VFS: Open virtual URI
+	VFS-->>Ext: Provide code buffer
+```

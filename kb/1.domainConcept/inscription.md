@@ -21,3 +21,20 @@
  - enginepy.project_gen.generate_python_project converts inline Python code into functions.
  - Guard with a single-line expression is rewritten to return the expression unless it already returns or prints.
  - Each function is registered into the inscription registry for lookup at runtime.
+
+## Async helper
+- `vscode_bridge.chat_async` returns an `AsyncResult` suitable for `execMode: async`.
+- Async results are wired via callbacks to resume token flow.
+
+## Example (inscription entry)
+```yaml
+inscriptions:
+	- id: in_async
+		language: python
+		kind: expression
+		execMode: async
+		source: inline
+		code: |
+			from enginepy import vscode_bridge
+			return vscode_bridge.chat_async("Summarize this net")
+```

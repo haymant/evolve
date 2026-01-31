@@ -12,7 +12,11 @@
   ],
   "activationEvents": [
     "onLanguage:yaml",
-    "onCommand:evolve.openGraphEditor"
+    "onCommand:evolve.openGraphEditor",
+    "onCommand:evolve.listPendingOperations",
+    "onCommand:evolve.resumeForm",
+    "onCommand:evolve.cancelOperation",
+    "onCommand:evolve.submitOperation"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -56,6 +60,22 @@
       {
         "command": "evolve.openInscriptionAtCursor",
         "title": "EVOLVE: Open Inscription at Cursor"
+      },
+      {
+        "command": "evolve.listPendingOperations",
+        "title": "EVOLVE: List Pending Operations"
+      },
+      {
+        "command": "evolve.resumeForm",
+        "title": "EVOLVE: Resume Pending Form"
+      },
+      {
+        "command": "evolve.cancelOperation",
+        "title": "EVOLVE: Cancel Pending Operation"
+      },
+      {
+        "command": "evolve.submitOperation",
+        "title": "EVOLVE: Submit Pending Operation"
       }
     ],
     "menus": {
@@ -141,7 +161,25 @@
           "description": "Fixed port for run-mode bridge. Use 0 to select a random available port."
         }
       }
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "evolve",
+        "name": "EVOLVE",
+        "fullName": "EVOLVE Async Ops",
+        "description": "Manage pending EVOLVE async operations",
+        "commands": [
+          {
+            "name": "jobs",
+            "description": "List pending async operations"
+          },
+          {
+            "name": "submit",
+            "description": "Submit a pending operation by resume token"
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build": "tsc -p .",

@@ -10,6 +10,11 @@
  ## Copilot chat integration
  - Uses VS Code Language Model API to send chat requests.
  - Model selection order: request param model, setting evolve.copilot.defaultModel, fallback to first Copilot model.
+
+## Run-mode bridge
+- WebSocket server started on run; Python connects with token + session params.
+- Uses the same request schema as DAP bridge.
+- Implementation: [editor/src/extension.ts](editor/src/extension.ts)
  
  ## Editor validation
  - YAML language server is wired when installed; schema/pnml.schema is applied to *.pnml.yaml and *.evolve.yaml.

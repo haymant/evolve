@@ -10,6 +10,17 @@
  2. Optional: command evolve.generatePython creates a runnable Python project under .vscode/evolve_py.
  3. Run uses PNMLEngine directly; debug uses PNMLDAPServer.
  4. During debug, Python inscriptions can call VSCodeBridge APIs.
+
+## Architecture (current implementation)
+```mermaid
+flowchart LR
+  Editor[VS Code Extension] -->|LSP| LS[Python LSP]
+  Editor -->|Debug Adapter| DAP[PNML DAP Server]
+  Editor -->|Run Bridge| WS[Run Bridge WS]
+  DAP --> Engine[PNML Engine]
+  WS --> Engine
+  Engine --> Generated[.vscode/evolve_py]
+```
 # Run and Debug Pipeline — EVOLVE PNML Engine and Debugger 🛠️
 
 This document describes the design and runtime wiring for both run mode (non-debug execution) and debug mode in the EVOLVE PNML system. It focuses on the current Python-based implementation, where the Language Server (LS) generates executable Python projects from PNML YAML files. The execution engine is a static Python module handling Petri net semantics, with native integration for Python inscriptions. Notes are included for future extensions to other languages (e.g., TypeScript, Rust) via pluggable adapters and WASM.

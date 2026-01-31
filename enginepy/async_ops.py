@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional, Any, List
+from typing import Callable, Optional, Any, List, Dict
 import threading
 import time
 
@@ -45,6 +45,17 @@ class AsyncResult:
     def _notify(self) -> None:
         for cb in list(self._callbacks):
             cb(self)
+
+
+@dataclass
+class AsyncOpRequest:
+    """Represents a host-managed async operation that requires manual resume."""
+
+    operation_type: str
+    operation_params: Optional[Dict[str, Any]] = None
+    ui_state: Optional[Dict[str, Any]] = None
+    resume_token: Optional[str] = None
+    timeout_ms: Optional[int] = None
 
 
 def run_async(fn: Callable[[], Any]) -> AsyncResult:

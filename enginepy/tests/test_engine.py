@@ -4,7 +4,7 @@ import time
 from enginepy.inscription_registry import build_registry_key, clear_registry, register_inscription
 from enginepy.pnml_engine import DebugEngine, PNMLEngine, PendingOp
 from enginepy.pnml_parser import parse_pnml
-from enginepy.async_ops import run_async
+from enginepy.async_ops import run_async, AsyncOpRequest
 
 SAMPLE = """
 pnml:
@@ -174,6 +174,40 @@ class EngineTests(unittest.TestCase):
         net, _ = parse_pnml(SAMPLE)
         engine = PNMLEngine(net)
         self.assertIsNotNone(engine)
+
+    def test_submit_async_by_id(self) -> None:
+      net, _ = parse_pnml(SAMPLE_WITH_ASYNC)
+      clear_registry()
+
+      def async_expr(_token=None):
+        return AsyncOpRequest(operation_type="form")
+
+      register_inscription(build_registry_key("async_demo", "t1", "expression"), async_expr)
+      engine = PNMLEngine(net)
+
+      result = engine.step_once()
+      self.assertIsInstance(result, PendingOp)
+      self.assertEqual(len(engine.pending_ops_by_id), 1)
+      engine.submit_async(op_id=result.id, result="manual-result")
+      self.assertEqual(len(engine.pending_ops_by_id), 0)
+      self.assertIn("manual-result", engine.marking.get("p2", []))
+
+    def test_submit_async_by_token(self) -> None:
+      net, _ = parse_pnml(SAMPLE_WITH_ASYNC)
+      clear_registry()
+
+      def async_expr(_token=None):
+        return AsyncOpRequest(operation_type="participant", resume_token="token-123")
+
+      register_inscription(build_registry_key("async_demo", "t1", "expression"), async_expr)
+      engine = PNMLEngine(net)
+
+      result = engine.step_once()
+      self.assertIsInstance(result, PendingOp)
+      self.assertEqual(len(engine.pending_ops_by_id), 1)
+      engine.submit_async(resume_token="token-123", result="token-result")
+      self.assertEqual(len(engine.pending_ops_by_id), 0)
+      self.assertIn("token-result", engine.marking.get("p2", []))
 
     def test_ls_generation_placeholder(self) -> None:
         # Placeholder for LS generation: verify parser builds place index.

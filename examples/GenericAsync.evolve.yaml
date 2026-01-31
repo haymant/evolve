@@ -1,0 +1,89 @@
+pnml:
+  net:
+    - id: generic_async
+      type: "https://evolve.dev/pnml/hlpn/evolve-2009"
+      page:
+      - id: page1
+        place:
+          - id: p_start
+            evolve:
+              initialTokens:
+                - value: "start"
+          - id: p_form
+          - id: p_participant
+          - id: p_lambda
+          - id: p_http
+          - id: p_done
+        transition:
+          - id: t_form
+            evolve:
+              inscriptions:
+                - id: in_form
+                  language: python
+                  kind: expression
+                  execMode: async
+                  source: inline
+                  code: |
+                    # Example: form async (host-managed)
+                    return vscode_bridge.show_form_async({"title": "Approve?"})
+          - id: t_participant
+            evolve:
+              inscriptions:
+                - id: in_participant
+                  language: python
+                  kind: expression
+                  execMode: async
+                  source: inline
+                  code: |
+                    # Example: participant async (host + /submit)
+                    return vscode_bridge.participant_async("reviewer", {"transition": "t_participant"})
+          - id: t_lambda
+            evolve:
+              inscriptions:
+                - id: in_lambda
+                  language: python
+                  kind: expression
+                  execMode: async
+                  source: inline
+                  code: |
+                    # Example: lambda async (host runs worker)
+                    return vscode_bridge.lambda_async("score", [42])
+          - id: t_http
+            evolve:
+              inscriptions:
+                - id: in_http
+                  language: python
+                  kind: expression
+                  execMode: async
+                  source: inline
+                  code: |
+                    # Example: HTTP async (webhook resume)
+                    return vscode_bridge.http_async("https://example/submit")
+        arc:
+          - id: a_start_form
+            source: p_start
+            target: t_form
+          - id: a_form_p1
+            source: t_form
+            target: p_form
+
+          - id: a_form_participant
+            source: p_form
+            target: t_participant
+          - id: a_participant_p2
+            source: t_participant
+            target: p_participant
+
+          - id: a_participant_lambda
+            source: p_participant
+            target: t_lambda
+          - id: a_lambda_p3
+            source: t_lambda
+            target: p_lambda
+
+          - id: a_lambda_http
+            source: p_lambda
+            target: t_http
+          - id: a_http_done
+            source: t_http
+            target: p_done

@@ -13,3 +13,15 @@
  
  ## Limitations
  - Only inline Python inscriptions are generated; other languages are ignored.
+
+## Generated function shape
+```python
+# <transition-id> <kind> <inscription-id>
+def t1_expression(token=None):
+	print("Moving")
+
+register_inscription(build_registry_key('net', 't1', 'expression'), t1_expression)
+```
+
+## Code reference
+- Generator: [enginepy/project_gen.py](enginepy/project_gen.py)

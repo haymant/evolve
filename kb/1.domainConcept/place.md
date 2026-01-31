@@ -14,3 +14,17 @@
  - Tokens are stored as a list per place in PNMLEngine.marking.
  - A transition is enabled if all its input places have at least one token.
  - When a transition fires, one token is removed from each input place.
+
+## Place indexing (editor + debug)
+- Place lines are extracted by `extract_place_index` for symbols and breakpoints.
+- Used by the editor and DAP to map place ids to lines.
+- Implementation: [enginepy/pnml_parser.py](enginepy/pnml_parser.py), [editor/src/placeIndex.ts](editor/src/placeIndex.ts).
+
+## Example (YAML)
+```yaml
+place:
+	- id: p1
+		evolve:
+			initialTokens:
+				- value: Red
+```

@@ -10,3 +10,8 @@
  - Execute commands:
 	 - evolve.places: returns place ids and line ranges.
 	 - evolve.generatePython: writes a generated Python project under .vscode/evolve_py.
+
+## Example response (document symbols)
+```json
+[{"name":"p1","kind":12,"range":{"start":{"line":6,"character":0},"end":{"line":12,"character":0}}}]
+```

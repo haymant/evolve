@@ -10,3 +10,6 @@
  
  ## VS Code bridge interaction
  - During debug, inscriptions can call VSCodeBridge APIs for chat and editor actions.
+
+## Marking output
+- Debug adapter prints marking snapshots and final marking to the debug console.

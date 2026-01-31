@@ -13,6 +13,22 @@
 ## Schema extension
 - The JSON schema defines evolveInscription fields such as languageVersion, signature, timeout, sandbox, and execMode.
 - Runtime currently executes execMode (sync/async) but ignores other metadata fields (validation-only).
+
+## Validation source
+- Schema file: [schema/pnml.schema](schema/pnml.schema).
+
+## Example (execMode)
+```yaml
+inscriptions:
+	- id: in2
+		language: python
+		kind: expression
+		execMode: async
+		source: inline
+		code: |
+			from enginepy import vscode_bridge
+			return vscode_bridge.chat_async("ping")
+```
  
  ## Practical implications
  - The YAML model is tolerant but limited; only the supported keys influence runtime.

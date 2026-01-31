@@ -22,7 +22,7 @@ import base64
 import hashlib
 from urllib.parse import urlparse, urlencode
 
-from .async_ops import AsyncResult, run_async
+from .async_ops import AsyncResult, AsyncOpRequest, run_async
 
 
 class VSCodeBridge:
@@ -71,6 +71,39 @@ class VSCodeBridge:
     def chat_async(self, message: str, timeout: int = 30) -> AsyncResult:
         """Run chat in a background thread and return an AsyncResult."""
         return run_async(lambda: self.chat(message, timeout))
+
+    def show_form_async(self, form_spec: Dict[str, Any], timeout: int = 300) -> AsyncOpRequest:
+        """Create a host-managed async form operation."""
+        return AsyncOpRequest(
+            operation_type="form",
+            operation_params={"formSpec": form_spec},
+            ui_state={"formSpec": form_spec},
+            timeout_ms=timeout * 1000,
+        )
+
+    def participant_async(self, role: str, context: Dict[str, Any], timeout: int = 300) -> AsyncOpRequest:
+        """Create a host-managed copilot participant operation."""
+        return AsyncOpRequest(
+            operation_type="copilot_participant",
+            operation_params={"role": role, "context": context},
+            timeout_ms=timeout * 1000,
+        )
+
+    def lambda_async(self, name: str, args: List[Any], timeout: int = 60) -> AsyncOpRequest:
+        """Create a host-managed lambda operation."""
+        return AsyncOpRequest(
+            operation_type="lambda",
+            operation_params={"name": name, "args": args},
+            timeout_ms=timeout * 1000,
+        )
+
+    def http_async(self, url: str, method: str = "POST", timeout: int = 300) -> AsyncOpRequest:
+        """Create a host-managed HTTP submit operation."""
+        return AsyncOpRequest(
+            operation_type="http_endpoint",
+            operation_params={"url": url, "method": method},
+            timeout_ms=timeout * 1000,
+        )
     
     def execute_command(self, command: str, *args, timeout: int = 10) -> Any:
         """
@@ -235,6 +268,26 @@ class RunBridgeClient:
                     return message
             raise RuntimeError(f"Request timeout after {timeout_ms/1000.0}s")
 
+    def send_event(self, event: Dict[str, Any]) -> None:
+        with self._lock:
+            self._connect()
+            payload = json.dumps(event).encode("utf-8")
+            self._send_frame(payload)
+
+    def read_message(self, timeout: float) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            self._connect()
+            try:
+                data = self._recv_frame(timeout=timeout)
+            except socket.timeout:
+                return None
+        if not data:
+            return None
+        try:
+            return json.loads(data.decode("utf-8"))
+        except json.JSONDecodeError:
+            return None
+
     def _recv_http_headers(self, sock: socket.socket) -> str:
         data = b""
         while b"\r\n\r\n" not in data:
@@ -321,6 +374,58 @@ def is_available() -> bool:
     return _bridge is not None or _ensure_run_bridge() is not None
 
 
+def emit_async_operation_started(op: Any) -> None:
+    run_bridge = _ensure_run_bridge()
+    if run_bridge is None:
+        return
+    metadata = getattr(op, "metadata", None) or {}
+    raw_timeout = metadata.get("timeout_ms") or metadata.get("timeout") if isinstance(metadata, dict) else None
+    try:
+        timeout_ms = int(raw_timeout) if raw_timeout is not None else None
+    except (TypeError, ValueError):
+        timeout_ms = None
+    body = {
+        "operationId": getattr(op, "id", None),
+        "operationType": getattr(op, "operation_type", None),
+        "resumeToken": getattr(op, "resume_token", None),
+        "transitionId": getattr(op, "transition_id", None),
+        "transitionName": getattr(op, "transition_name", None),
+        "transitionDescription": getattr(op, "transition_description", None),
+        "inscriptionId": getattr(op, "inscription_id", None),
+        "netId": getattr(op, "net_id", None),
+        "runId": getattr(op, "run_id", None),
+        "createdAt": int(time.time() * 1000),
+        "timeoutMs": timeout_ms,
+        "uiState": getattr(op, "ui_state", None),
+        "metadata": metadata,
+    }
+    run_bridge.send_event({
+        "type": "dapEvent",
+        "event": "asyncOperationStarted",
+        "body": body,
+    })
+
+
+def wait_for_async_submit(resume_token: Optional[str], timeout_ms: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    run_bridge = _ensure_run_bridge()
+    if run_bridge is None:
+        return None
+    deadline = time.time() + (timeout_ms / 1000.0 if timeout_ms else 300.0)
+    while time.time() < deadline:
+        msg = run_bridge.read_message(timeout=0.5)
+        if not msg:
+            continue
+        if msg.get("type") != "dapEvent" or msg.get("event") != "asyncOperationSubmit":
+            continue
+        body = msg.get("body") or {}
+        token = body.get("resumeToken")
+        op_id = body.get("operationId")
+        if resume_token and token != resume_token and op_id != resume_token:
+            continue
+        return body
+    return None
+
+
 def chat(message: str, timeout: int = 30) -> str:
     """
     Send message to GitHub Copilot Chat and return response.
@@ -376,6 +481,43 @@ def chat_async(message: str, timeout: int = 30) -> AsyncResult:
             "The bridge is only available during debug sessions or run-mode bridge sessions."
         )
     return run_async(lambda: chat(message, timeout))
+
+
+def show_form_async(form_spec: Dict[str, Any], timeout: int = 300) -> AsyncOpRequest:
+    """Create a host-managed async form operation."""
+    return AsyncOpRequest(
+        operation_type="form",
+        operation_params={"formSpec": form_spec},
+        ui_state={"formSpec": form_spec},
+        timeout_ms=timeout * 1000,
+    )
+
+
+def participant_async(role: str, context: Dict[str, Any], timeout: int = 300) -> AsyncOpRequest:
+    """Create a host-managed copilot participant operation."""
+    return AsyncOpRequest(
+        operation_type="copilot_participant",
+        operation_params={"role": role, "context": context},
+        timeout_ms=timeout * 1000,
+    )
+
+
+def lambda_async(name: str, args: List[Any], timeout: int = 60) -> AsyncOpRequest:
+    """Create a host-managed lambda operation."""
+    return AsyncOpRequest(
+        operation_type="lambda",
+        operation_params={"name": name, "args": args},
+        timeout_ms=timeout * 1000,
+    )
+
+
+def http_async(url: str, method: str = "POST", timeout: int = 300) -> AsyncOpRequest:
+    """Create a host-managed HTTP submit operation."""
+    return AsyncOpRequest(
+        operation_type="http_endpoint",
+        operation_params={"url": url, "method": method},
+        timeout_ms=timeout * 1000,
+    )
 
 
 def execute_command(command: str, *args, timeout: int = 10) -> Any:

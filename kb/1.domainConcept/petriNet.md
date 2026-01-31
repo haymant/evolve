@@ -16,3 +16,30 @@
  ## Runtime model
  - PNMLEngine builds input/output maps from arcs.
  - Execution is token-based, without timing or priorities.
+
+## Structure diagram
+```mermaid
+flowchart TD
+	PNML --> Net
+	Net --> Page
+	Page --> Place
+	Page --> Transition
+	Page --> Arc
+```
+
+## Example (minimal net)
+```yaml
+pnml:
+	net:
+		- id: demo
+			page:
+				- id: page1
+					place:
+						- id: p1
+					transition:
+						- id: t1
+					arc:
+						- id: a1
+							source: p1
+							target: t1
+```

@@ -20,3 +20,15 @@
  
  ## Timeouts
  - Each request can include a timeout (milliseconds). The DAP server enforces it.
+
+## Run-mode env vars
+- EVOLVE_RUN_BRIDGE_ADDR
+- EVOLVE_RUN_BRIDGE_TOKEN
+- EVOLVE_RUN_BRIDGE_SESSION
+
+## Example (Python)
+```python
+from enginepy import vscode_bridge
+response = vscode_bridge.chat("Explain this net")
+print(response)
+```
