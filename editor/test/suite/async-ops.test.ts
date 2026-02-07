@@ -49,6 +49,18 @@ suite('Async Operations UI Tests', () => {
     }
   }
 
+
+  async function waitForSubmitted(timeoutMs: number): Promise<any> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if ((waitForSubmitted as any).submitted) {
+        return (waitForSubmitted as any).submitted;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('Timed out waiting for submit');
+  }
+
   test('Status bar item updates when pending count changes', async () => {
     await activateExtension();
     const store = extension.__getPendingOpsStore();
@@ -146,6 +158,43 @@ suite('Async Operations UI Tests', () => {
       cleanupPendingOps();
     }
   });
+
+  test('Lambda async operations execute registry handler', async () => {
+    await activateExtension();
+    const store = extension.__getPendingOpsStore();
+    assert.ok(store, 'Pending ops store should be available');
+
+    const registry = extension.__getLambdaRegistryForTests();
+    assert.ok(registry, 'Lambda registry should be available');
+    registry!.clear();
+    registry!.register('score', async (args: any[]) => ({ score: args[0] }));
+
+    extension.__setAsyncSubmitHandler(async (payload: any) => {
+      (waitForSubmitted as any).submitted = payload;
+    });
+
+    try {
+      extension.__handleAsyncOperationEventForTests('asyncOperationStarted', {
+        operationId: 'op-lambda-1',
+        operationType: 'lambda',
+        resumeToken: 'token-lambda',
+        createdAt: Date.now(),
+        metadata: {
+          operationParams: { name: 'score', args: [7] }
+        }
+      });
+
+      const submitted = await waitForSubmitted(2000);
+      assert.ok(submitted);
+      assert.strictEqual(submitted.operationId, 'op-lambda-1');
+      assert.deepStrictEqual(submitted.result, { score: 7 });
+      assert.strictEqual(store!.findById('op-lambda-1'), undefined);
+    } finally {
+      extension.__setAsyncSubmitHandler(undefined);
+      (waitForSubmitted as any).submitted = undefined;
+    }
+  });
+
 
   test('Resume form submits result payload', async () => {
     await activateExtension();

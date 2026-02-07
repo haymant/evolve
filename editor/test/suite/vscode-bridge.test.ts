@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as http from 'http';
 import { suite, test } from 'mocha';
 const extension = require('../../../dist/extension');
 
@@ -170,6 +171,82 @@ suite('VSCode Bridge Integration Tests', () => {
       assert.ok(response.includes('Invalid resume token'));
     } finally {
       extension.__setChatModelsOverride(undefined);
+    }
+  });
+
+  test('HTTP /submit validates token and session', async function() {
+    this.timeout(10000);
+    await activateExtension();
+    const store = extension.__getPendingOpsStore();
+    assert.ok(store, 'Pending ops store should be available');
+
+    const info = await extension.__ensureRunBridgeForTests();
+    const resumeToken = 'token-http-1';
+
+    store!.registerStarted({
+      operationId: 'op-http-1',
+      transitionId: 'tHttp',
+      transitionName: 'HTTP Test',
+      status: 'pending',
+      runId: 'run-http',
+      netId: 'net-http',
+      resumeToken,
+      createdAt: Date.now(),
+      operationType: 'http_endpoint',
+      operationParams: { url: 'https://example/submit', method: 'POST' }
+    });
+
+    const postSubmit = (payload: any, headers: Record<string, string>) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const data = JSON.stringify(payload);
+        const req = http.request(
+          {
+            method: 'POST',
+            hostname: '127.0.0.1',
+            port: info.port,
+            path: '/submit',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(data).toString(),
+              ...headers
+            }
+          },
+          (res) => {
+            let body = '';
+            res.on('data', (chunk) => (body += chunk.toString()));
+            res.on('end', () => resolve({ status: res.statusCode || 0, body }));
+          }
+        );
+        req.on('error', reject);
+        req.write(data);
+        req.end();
+      });
+
+    let submitted: any;
+    extension.__setAsyncSubmitHandler(async (payload: any) => {
+      submitted = payload;
+    });
+
+    try {
+      const missingSession = await postSubmit(
+        { resumeToken, result: { ok: true } },
+        { 'x-evolve-run-bridge-token': info.token }
+      );
+      assert.strictEqual(missingSession.status, 401);
+
+      const ok = await postSubmit(
+        { resumeToken, result: { ok: true } },
+        {
+          'x-evolve-run-bridge-token': info.token,
+          'x-evolve-run-bridge-session': info.sessionId
+        }
+      );
+      assert.strictEqual(ok.status, 200);
+      assert.ok(submitted);
+      assert.strictEqual(submitted.resumeToken, resumeToken);
+    } finally {
+      extension.__setAsyncSubmitHandler(undefined);
+      extension.__shutdownRunBridgeForTests();
     }
   });
 

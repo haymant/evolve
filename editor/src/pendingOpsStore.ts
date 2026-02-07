@@ -11,6 +11,7 @@ export type PendingOp = {
   netId?: string;
   runId?: string;
   operationType?: string;
+  operationParams?: Record<string, unknown> | null;
   status: PendingOpStatus;
   resumeToken?: string;
   uiState?: Record<string, unknown> | null;

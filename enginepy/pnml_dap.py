@@ -63,7 +63,7 @@ class DAPProtocol:
 
 
 class PNMLDAPServer:
-    def __init__(self) -> None:
+    def __init__(self, start_reader: bool = True) -> None:
         self.protocol = DAPProtocol()
         self.engine = DebugEngine()
         self.program: Optional[str] = None
@@ -85,7 +85,8 @@ class PNMLDAPServer:
         self._bridge: Optional[vscode_bridge.VSCodeBridge] = None
         self._incoming_messages: queue.Queue = queue.Queue()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self._reader_thread.start()
+        if start_reader:
+            self._reader_thread.start()
         self._known_pending_ops: set[int] = set()
 
     def run(self) -> None:
@@ -317,13 +318,25 @@ class PNMLDAPServer:
         self._emit_output(buf.getvalue())
         self._emit_marking()
         self._emit_pending_ops()
+        if self.engine.engine and self.engine.engine.pending_ops_by_id:
+            if self.inscription_breakpoints:
+                path, lines = next(iter(self.inscription_breakpoints.items()))
+                if lines:
+                    self.last_stop_source = {"path": path, "line": min(lines), "name": "inscription"}
+            else:
+                self.last_stop = entry
+                self.last_stop_place = None
+            self.stopped = True
+            self.protocol.send_event("stopped", {"reason": "pause", "threadId": 1})
+            return
         if entry and entry.line is not None:
             self.last_stop = entry
             self.last_stop_place = None
+            self.stopped = True
             self.ignore_breakpoints_once = True
             self.protocol.send_event("stopped", {"reason": "breakpoint", "threadId": 1})
-        else:
-            self._terminate()
+            return
+        self._terminate()
 
     def handle_next(self, request: Dict[str, Any]) -> None:
         self.protocol.send_response(request)
@@ -372,6 +385,14 @@ class PNMLDAPServer:
         if op_id is None and resume_token is None:
             self.protocol.send_response(request)
             return
+        pending = None
+        if op_id is not None:
+            try:
+                pending = self.engine.engine.pending_ops_by_id.get(int(op_id))
+            except (TypeError, ValueError):
+                pending = None
+        if pending is None and resume_token is not None:
+            pending = self.engine.engine.pending_ops_by_token.get(str(resume_token))
         try:
             op_id_int = int(op_id) if op_id is not None else None
         except (TypeError, ValueError):
@@ -385,6 +406,38 @@ class PNMLDAPServer:
             "result": result,
             "error": error,
         })
+        self._emit_marking()
+        if pending and self.engine.breakpoints:
+            stop_place = None
+            for pid in pending.output_places:
+                if pid not in self.engine.breakpoints:
+                    continue
+                tokens = self.engine.engine.marking.get(pid) or []
+                if tokens:
+                    stop_place = pid
+                    break
+            if stop_place:
+                line = self.engine.place_line_map.get(stop_place)
+                entry = HistoryEntry(
+                    step=len(self.engine.history) + 1,
+                    transition_id=pending.transition_id,
+                    line=line,
+                    produced_places=[stop_place],
+                )
+                self.engine.history.append(entry)
+                self.last_stop = entry
+                self.last_stop_place = stop_place
+                self.stopped = True
+                self.protocol.send_event(
+                    "stopped",
+                    {
+                        "reason": "asyncComplete",
+                        "threadId": 1,
+                        "place": stop_place,
+                        "transitionId": pending.transition_id,
+                        "resumeToken": pending.resume_token,
+                    },
+                )
         self.protocol.send_response(request)
 
     def handle_evaluate(self, request: Dict[str, Any]) -> None:

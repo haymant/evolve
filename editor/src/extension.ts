@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import * as http from "http";
 import * as crypto from "crypto";
 import WebSocket, { WebSocketServer } from "ws";
-import { PendingOp, PendingOpsStore } from "./pendingOpsStore";
+import { PendingOp, PendingOpsStore, PendingOpStatus } from "./pendingOpsStore";
 import {
   extractInscriptions,
   updateInscriptionText,
@@ -22,6 +22,29 @@ let client: LanguageClient | undefined;
 let yamlClient: LanguageClient | undefined;
 const generatedModules = new Map<string, string>();
 const chatHistory = new Map<string, Array<{ role: string; content: string; timestamp: number }>>();
+
+type LambdaHandler = (args: unknown[], op: PendingOp) => Promise<unknown> | unknown;
+
+class LambdaRegistry {
+  private readonly handlers = new Map<string, LambdaHandler>();
+
+  register(name: string, handler: LambdaHandler): void {
+    const key = (name || '').trim();
+    if (!key) {
+      throw new Error('Lambda handler name is required');
+    }
+    this.handlers.set(key, handler);
+  }
+
+  get(name: string | undefined): LambdaHandler | undefined {
+    if (!name) return undefined;
+    return this.handlers.get(name);
+  }
+
+  clear(): void {
+    this.handlers.clear();
+  }
+}
 
 type RunBridgeInfo = {
   addr: string;
@@ -46,6 +69,9 @@ let pendingStatusBarItem: vscode.StatusBarItem | undefined;
 const runBridgeClients = new Set<WebSocket>();
 let asyncSubmitHandler: ((payload: AsyncSubmitPayload) => Promise<void>) | undefined;
 let selectChatModelsOverride: (() => Promise<any[]>) | undefined;
+let lambdaRegistry: LambdaRegistry | undefined;
+const lambdaOpsInFlight = new Set<string>();
+const completedResumeTokens = new Map<string, PendingOpStatus>();
 
 const getChatModels = async (): Promise<any[]> => {
   if (selectChatModelsOverride) {
@@ -177,6 +203,14 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   pendingOpsStore = new PendingOpsStore(context);
+  lambdaRegistry = new LambdaRegistry();
+  lambdaRegistry.register('score', (args) => {
+    const value = Array.isArray(args) ? args[0] : undefined;
+    if (typeof value === 'number') {
+      return { score: value };
+    }
+    return { score: value ?? null };
+  });
 
   const updatePendingStatusBar = () => {
     if (!pendingOpsStore) return;
@@ -197,6 +231,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   pendingOpsStore.onDidChangePendingOps(async (evt) => {
     updatePendingStatusBar();
+    if (evt.type === 'removed' && evt.op.resumeToken) {
+      completedResumeTokens.set(evt.op.resumeToken, evt.op.status || 'completed');
+      if (completedResumeTokens.size > 1000) {
+        const oldest = completedResumeTokens.keys().next();
+        if (!oldest.done) completedResumeTokens.delete(oldest.value);
+      }
+    }
     if (evt.type === 'started') {
       const actions: string[] = ['Open pending list'];
       if (evt.op.operationType === 'form') {
@@ -873,9 +914,52 @@ function formatDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+function resolveOperationParams(op: PendingOp): Record<string, unknown> | undefined {
+  const direct = op.operationParams || undefined;
+  if (direct && typeof direct === 'object') return direct as Record<string, unknown>;
+  const metadataParams = op.metadata && (op.metadata as Record<string, unknown>).operationParams;
+  if (metadataParams && typeof metadataParams === 'object') {
+    return metadataParams as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+async function runLambdaOperation(op: PendingOp): Promise<void> {
+  if (!lambdaRegistry) return;
+  if (lambdaOpsInFlight.has(op.operationId)) return;
+  const params = resolveOperationParams(op) || {};
+  const name = typeof params.name === 'string' ? params.name : undefined;
+  const args = Array.isArray((params as any).args) ? (params as any).args : [];
+  const handler = lambdaRegistry.get(name);
+  if (!handler) {
+    await submitOperation(op, { error: `Unknown lambda handler: ${name || 'unknown'}`, source: 'lambda' });
+    return;
+  }
+  lambdaOpsInFlight.add(op.operationId);
+  try {
+    const result = await Promise.resolve(handler(args, op));
+    await submitOperation(op, { result, source: 'lambda' });
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    await submitOperation(op, { error: message, source: 'lambda' });
+  } finally {
+    lambdaOpsInFlight.delete(op.operationId);
+  }
+}
+
 function formatPendingDetail(op: PendingOp): string {
   const parts: string[] = [];
   if (op.resumeToken) parts.push(`token: ${op.resumeToken}`);
+  const params = resolveOperationParams(op);
+  if (op.operationType === 'lambda') {
+    const name = typeof params?.name === 'string' ? params?.name : 'unknown';
+    const args = Array.isArray((params as any)?.args) ? (params as any).args : [];
+    parts.push(`lambda: ${name}(${args.length})`);
+  } else if (op.operationType === 'http_endpoint') {
+    const method = typeof params?.method === 'string' ? params.method : 'POST';
+    const url = typeof params?.url === 'string' ? params.url : '';
+    parts.push(`http: ${method}${url ? ' ' + url : ''}`);
+  }
   if (op.runId) parts.push(`run: ${op.runId}`);
   if (op.timeoutMs) {
     const remaining = Math.max(0, op.timeoutMs - (Date.now() - op.createdAt));
@@ -985,6 +1069,7 @@ function handleAsyncOperationEvent(eventName: string, body: any): void {
       netId: body?.netId,
       runId: body?.runId,
       operationType: body?.operationType,
+      operationParams: body?.operationParams || body?.metadata?.operationParams,
       status: 'pending',
       resumeToken: body?.resumeToken,
       uiState: body?.uiState,
@@ -994,6 +1079,9 @@ function handleAsyncOperationEvent(eventName: string, body: any): void {
     };
     if (!op.operationId) return;
     pendingOpsStore.registerStarted(op);
+    if (String(op.operationType || '').toLowerCase() === 'lambda') {
+      void runLambdaOperation(op);
+    }
     return;
   }
   if (eventName === 'asyncOperationUpdated') {
@@ -1011,8 +1099,19 @@ function renderJobsList(pending: PendingOp[]): string {
   const lines = pending.map((op) => {
     const remaining = op.timeoutMs ? Math.max(0, op.timeoutMs - (Date.now() - op.createdAt)) : undefined;
     const remainingText = remaining !== undefined ? formatDuration(remaining) : 'n/a';
+    const params = resolveOperationParams(op);
+    let typeDetail = op.operationType || 'async';
+    if (op.operationType === 'lambda') {
+      const name = typeof params?.name === 'string' ? params.name : 'unknown';
+      typeDetail = `lambda:${name}`;
+    } else if (op.operationType === 'http_endpoint') {
+      const method = typeof params?.method === 'string' ? params.method : 'POST';
+      const url = typeof params?.url === 'string' ? params.url : '';
+      typeDetail = `http:${method}${url ? ' ' + url : ''}`;
+    }
     return [
       `• ${op.transitionName || op.transitionId || op.operationId}`,
+      `  type: ${typeDetail}`,
       `  token: ${op.resumeToken || 'n/a'}`,
       `  run: ${op.runId || 'n/a'} · net: ${op.netId || 'n/a'}`,
       `  timeout: ${remainingText}`
@@ -1083,16 +1182,6 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
       return;
     }
 
-    const headerToken = (req.headers['x-evolve-run-bridge-token'] || req.headers['x-evolve-token'] || '').toString();
-    const authHeader = (req.headers['authorization'] || '').toString();
-    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
-    const providedToken = headerToken || bearer;
-    if (!providedToken || providedToken !== token) {
-      res.statusCode = 401;
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
-      return;
-    }
-
     let body = '';
     req.on('data', (chunk) => {
       body += chunk.toString();
@@ -1104,6 +1193,24 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
       } catch {
         res.statusCode = 400;
         res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+      const headerToken = (req.headers['x-evolve-run-bridge-token'] || req.headers['x-evolve-token'] || '').toString();
+      const authHeader = (req.headers['authorization'] || '').toString();
+      const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
+      const providedToken = headerToken || bearer;
+      if (!providedToken || providedToken !== token) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      const headerSession = (req.headers['x-evolve-run-bridge-session'] || req.headers['x-evolve-session'] || '').toString();
+      const querySession = url.searchParams.get('session') || '';
+      const payloadSession = payload?.sessionId || payload?.session || '';
+      const providedSession = headerSession || querySession || String(payloadSession || '');
+      if (!providedSession || providedSession !== sessionId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: 'Unauthorized session' }));
         return;
       }
       const resumeToken = payload?.resumeToken;
@@ -1120,8 +1227,13 @@ async function ensureRunBridge(): Promise<{ [key: string]: string }> {
       }
       const op = pendingOpsStore.findByToken(resumeToken);
       if (!op) {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ error: 'Unknown resumeToken' }));
+        if (completedResumeTokens.has(resumeToken)) {
+          res.statusCode = 409;
+          res.end(JSON.stringify({ error: 'Operation already completed' }));
+        } else {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: 'Unknown resumeToken' }));
+        }
         return;
       }
       if (op.status !== 'pending') {
@@ -1426,6 +1538,34 @@ export function __setChatModelsOverride(factory?: () => Promise<any[]>): void {
 
 export async function __handleSlashCommandForTests(command: string, prompt: string): Promise<string> {
   return handleSlashCommand({ command, prompt }, null);
+}
+
+export function __getLambdaRegistryForTests(): LambdaRegistry | undefined {
+  return lambdaRegistry;
+}
+
+export async function __ensureRunBridgeForTests(): Promise<RunBridgeInfo> {
+  await ensureRunBridge();
+  if (!runBridgeInfo) {
+    throw new Error('Run bridge not available');
+  }
+  return runBridgeInfo;
+}
+
+export function __shutdownRunBridgeForTests(): void {
+  if (runBridgeSocketServer) {
+    runBridgeSocketServer.close();
+    runBridgeSocketServer = undefined;
+  }
+  if (runBridgeServer) {
+    runBridgeServer.close();
+    runBridgeServer = undefined;
+  }
+  runBridgeInfo = undefined;
+}
+
+export function __handleAsyncOperationEventForTests(eventName: string, body: any): void {
+  handleAsyncOperationEvent(eventName, body);
 }
 
 

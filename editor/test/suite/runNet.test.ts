@@ -327,4 +327,5 @@ suite('DAP PNML Tests', function () {
     vscode.debug.removeBreakpoints([bp]);
     tracker.dispose();
   });
+
 });
