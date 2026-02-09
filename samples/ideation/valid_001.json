@@ -1,0 +1,10 @@
+{
+  "goal": "Generate a minimal PNML workflow for a data ingestion pipeline.",
+  "constraints": ["Use only HTTP and manual steps", "No external databases"],
+  "kpis": ["time_to_first_run", "error_rate"],
+  "risk_appetite": "moderate",
+  "data_sources": ["user_upload"],
+  "tooling_limits": ["no_network_calls"],
+  "metadata": {"creator": "test-user", "timestamp": "2026-02-08T10:00:00Z"},
+  "mode": "ideation"
+}

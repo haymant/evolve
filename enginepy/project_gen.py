@@ -28,7 +28,22 @@ def generate_python_project(yaml_text: str, out_dir: str, source_name: str = "pn
     with open(os.path.join(local_engine_dir, "__init__.py"), "w", encoding="utf-8") as f:
         f.write("# Local engine runtime for generated project\n")
     engine_src_dir = os.path.dirname(__file__)
-    for name in ("pnml_engine.py", "pnml_parser.py", "inscription_registry.py", "vscode_bridge.py", "async_ops.py"):
+    for name in (
+        "pnml_engine.py",
+        "pnml_parser.py",
+        "inscription_registry.py",
+        "vscode_bridge.py",
+        "async_ops.py",
+        "pnml_generator.py",
+        "pnml_validator.py",
+        "ideation_spec.py",
+        "selection_applier.py",
+        "codegen.py",
+        "runtime.py",
+        "trace_collector.py",
+        "evaluator.py",
+        "vcs.py",
+    ):
         src_path = os.path.join(engine_src_dir, name)
         dst_path = os.path.join(local_engine_dir, name)
         if os.path.exists(src_path):
@@ -41,6 +56,16 @@ def generate_python_project(yaml_text: str, out_dir: str, source_name: str = "pn
         f.write("# Auto-generated inscriptions (inline python only)\n\n")
         f.write("from enginepy import vscode_bridge\n")
         f.write("from enginepy.inscription_registry import build_registry_key, register_inscription\n\n")
+        # Provide safe imports for commonly referenced helpers so generated
+        # functions don't raise NameErrors and static analyzers like Pylance
+        # don't report undefined variables.
+        f.write("try:\n")
+        f.write("    from enginepy import pnml_generator, selection_applier, pnml_validator, codegen, runtime, trace_collector, evaluator, vcs\n")
+        f.write("except Exception:\n")
+        f.write("    try:\n")
+        f.write("        import pnml_generator, selection_applier, pnml_validator, codegen, runtime, trace_collector, evaluator, vcs\n")
+        f.write("    except Exception:\n")
+        f.write("        pass\n\n")
         pnml_name = net.id or source_name
         for tid, transition in net.transitions.items():
             for ins in transition.inscriptions:

@@ -33,3 +33,42 @@ inscriptions:
  ## Practical implications
  - The YAML model is tolerant but limited; only the supported keys influence runtime.
  - YAML structure is preserved for authoring, but only a subset is executed.
+
+## Best practices for async inscriptions (avoid common mistakes)
+- Always return host AsyncOpRequest objects from async inscriptions.
+  - Correct: use an explicit `return` statement that returns the `AsyncOpRequest` (for example, `return vscode_bridge.participant_async(...)`) so the engine receives the pending operation and pauses execution.
+  - Incorrect: wrapping the call in a lambda like `lambda d: vscode_bridge.participant_async(...)` creates a function object rather than returning an `AsyncOpRequest`. The engine will not pause and may proceed to `END`.
+- Use block scalar (`|`) for multi-line Python code so the parser captures full code text including `return` lines.
+- Provide an `id` for inscriptions whenever possible. The parser uses the `id` when creating registry keys; missing ids can make tracing and testing harder.
+
+### Good example
+```yaml
+inscriptions:
+  - id: in_participant
+    language: python
+    kind: expression
+    execMode: async
+    source: inline
+    code: |
+      # Return an AsyncOpRequest so the engine pauses for host input
+      return vscode_bridge.participant_async("reviewer", {"prompt": "Approve?"})
+```
+
+### Bad example (common bug)
+```yaml
+inscriptions:
+  - language: python
+    kind: expression
+    execMode: async
+    source: inline
+    code: "lambda d: vscode_bridge.participant_async('reviewer')"
+```
+
+### Recommended tests / CI checks
+- Unit test: parse canonical example YAML (like `examples/evolve.evolve.yaml`) and assert that:
+  - Async inscriptions contain `return <vscode_bridge>_...` (not `lambda`).
+  - Inscription `id` exists for critical transitions.
+- Lint rule (optional): add a pre-commit linter that flags async inscriptions without `return` or using single-line lambda expressions.
+- Integration test: run the net and verify engine pauses at the expected PendingOp when the async inscription executes.
+
+These practices will reduce parser/runtime mismatches and prevent silent failures where async code does not pause the engine.

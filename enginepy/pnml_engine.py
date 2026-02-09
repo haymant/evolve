@@ -51,13 +51,33 @@ class PNMLEngine:
         self._pending_lock = threading.Lock()
 
     def enabled_transitions(self) -> List[str]:
+        """Return list of transitions that are *enabled* considering token availability and guard evaluation.
+
+        Guards are evaluated using the first token from the transition's input places (if present).
+        This ensures XOR-split style behavior when guards are mutually exclusive.
+        """
         if self.pending_ops_by_id:
             return []
         inputs, _outputs = self._build_io_maps()
         enabled: List[str] = []
         for tid, in_places in inputs.items():
-            if all(self.marking.get(pid) and len(self.marking[pid]) > 0 for pid in in_places):
-                enabled.append(tid)
+            # All input places must have at least one token
+            if not all(self.marking.get(pid) and len(self.marking[pid]) > 0 for pid in in_places):
+                continue
+            # Build peek tokens to evaluate guards
+            peek_tokens: List[object] = []
+            for pid in in_places:
+                if self.marking.get(pid):
+                    peek_tokens.append(self.marking[pid][0])
+            transition = self.net.transitions.get(tid)
+            if transition and transition.inscriptions:
+                try:
+                    if not self._evaluate_guards(transition.inscriptions, peek_tokens):
+                        continue
+                except Exception:
+                    # On any error evaluating a guard, treat it as not enabled to avoid unsafe firings
+                    continue
+            enabled.append(tid)
         return enabled
 
     def step_once(self) -> Optional[Union[str, PendingOp]]:
@@ -66,12 +86,26 @@ class PNMLEngine:
         enabled = self.enabled_transitions()
         if not enabled:
             return None
-        tid = enabled[0]
+        inputs, _outputs = self._build_io_maps()
+        # Prefer transitions that do not consume tokens from places that had initial tokens,
+        # so we don't get preempted by default 'start' or control tokens.
+        initial_places = [pid for pid, place in self.net.places.items() if getattr(place, 'tokens', None)]
+        candidates = [e for e in enabled if not any(pid in initial_places for pid in inputs.get(e, []))]
+        tid = candidates[0] if candidates else enabled[0]
         transition = self.net.transitions.get(tid)
-        if transition and transition.inscriptions:
-            if not self._evaluate_guards(transition.inscriptions):
-                return None
+
+        # Build peek tokens for guard evaluation (do not pop yet)
         inputs, outputs = self._build_io_maps()
+        peek_tokens: List[object] = []
+        for pid in inputs.get(tid, []):
+            if self.marking.get(pid):
+                peek_tokens.append(self.marking[pid][0])
+
+        if transition and transition.inscriptions:
+            if not self._evaluate_guards(transition.inscriptions, peek_tokens):
+                return None
+
+        # Now actually pop tokens to move
         moved_tokens: List[object] = []
         for pid in inputs.get(tid, []):
             if self.marking.get(pid):
@@ -89,14 +123,15 @@ class PNMLEngine:
             self.marking.setdefault(pid, []).extend(moved_tokens or [{"from": tid}])
         return tid
 
-    def _evaluate_guards(self, inscriptions: List[Inscription]) -> bool:
+    def _evaluate_guards(self, inscriptions: List[Inscription], tokens: List[object]) -> bool:
+        token = tokens[0] if tokens else None
         for ins in inscriptions:
             if ins.kind != "guard":
                 continue
             func = self._resolve_inscription(ins)
             if not func:
                 continue
-            result = self._call_inscription(func, None)
+            result = self._call_inscription(func, token)
             if result is None:
                 result = True
             if not bool(result):
@@ -118,7 +153,30 @@ class PNMLEngine:
                 continue
             arg = tokens[0] if tokens else None
             exec_mode = (ins.exec_mode or "sync").lower()
-            result = self._call_inscription(func, arg)
+            try:
+                result = self._call_inscription(func, arg)
+            except Exception as e:
+                import traceback as _tb
+                tb = _tb.format_exc()
+                pending = PendingOp(
+                    id=int(time.time() * 1000) % 1_000_000_000,
+                    transition_id=transition_id,
+                    inscription_id=ins.id,
+                    transition_name=transition_id,
+                    transition_description=None,
+                    net_id=self.net.id,
+                    run_id=self.run_id,
+                    operation_type="expression_error",
+                    resume_token=None,
+                    output_places=output_places,
+                    moved_tokens=tokens,
+                    result=None,
+                    completed=True,
+                    error=tb,
+                )
+                # Finalize by placing an error token in outputs and continue
+                self._finalize_async(pending)
+                return pending
             if exec_mode == "async":
                 if isinstance(result, AsyncResult):
                     pending = self._build_pending_op(
@@ -192,12 +250,19 @@ class PNMLEngine:
             self._unregister_pending_op(pending)
 
     def _finalize_async(self, pending: PendingOp) -> None:
+        # When an async completes, include both the result (or error) and
+        # moved tokens so information is not lost. Put result first so
+        # guard peeks see the payload rather than control tokens.
+        tokens: List[object] = []
+        drop_moved = False
         if pending.result is not None:
-            tokens: List[object] = [pending.result]
+            if isinstance(pending.result, dict):
+                drop_moved = bool(pending.result.pop("_drop_moved_tokens", False))
+            tokens.append(pending.result)
         elif pending.error is not None:
-            tokens = [{"error": pending.error}]
-        else:
-            tokens = list(pending.moved_tokens or [])
+            tokens.append({"error": pending.error})
+        if pending.moved_tokens and not drop_moved:
+            tokens.extend(list(pending.moved_tokens))
         if not tokens:
             tokens = [{"from": pending.transition_id}]
         for pid in pending.output_places:
@@ -250,10 +315,33 @@ class PNMLEngine:
         return f"evo_async_{int(time.time() * 1000)}"
 
     def _resolve_inscription(self, ins: Inscription) -> Optional[Callable[..., object]]:
+        # If a function was already attached, use it
         if ins.func:
             return ins.func
+        # Prefer registry resolution when available (allows tests and generated projects to stub behavior)
         if ins.registry_key:
-            ins.func = get_inscription(ins.registry_key)
+            reg_func = get_inscription(ins.registry_key)
+            if reg_func is not None:
+                ins.func = reg_func
+                return ins.func
+        # If inline python code is provided, compile it into a callable
+        if getattr(ins, "code", None) and getattr(ins, "source", None) == "inline" and (ins.language is None or ins.language.lower() == "python"):
+            try:
+                code_lines = ins.code.splitlines()
+                func_src = "def _fn(token=None):\n"
+                if ins.kind == "guard" and not any("return" in line for line in code_lines):
+                    # Treat guard code as an expression if no explicit return is provided.
+                    func_src += "    return " + ins.code.strip() + "\n"
+                else:
+                    for line in code_lines:
+                        func_src += "    " + line + "\n"
+                exec_globals: dict = {}
+                exec(func_src, exec_globals)
+                ins.func = exec_globals.get("_fn")
+                return ins.func
+            except Exception:
+                # Fall through to unresolved if compilation fails
+                pass
         return ins.func
 
     def _call_inscription(self, func: Callable[..., object], token: Optional[object]) -> object:
@@ -357,13 +445,17 @@ class DebugEngine:
                     return entry
                 self.step_counter += 1
                 produced = self._produced_places(result.transition_id)
+                stop_place = next((p for p in produced if p in self.breakpoints), None)
+                stop_line = self.place_line_map.get(stop_place) if stop_place else None
                 entry = HistoryEntry(
                     step=self.step_counter,
                     transition_id=result.transition_id,
-                    line=None,
+                    line=stop_line,
                     produced_places=produced,
                 )
                 self.history.append(entry)
+                if stop_place:
+                    return entry
                 continue
             transition_id = result
             self.step_counter += 1
@@ -387,11 +479,22 @@ class DebugEngine:
         if result is None:
             return None
         if isinstance(result, PendingOp):
+            if not result.completed:
+                entry = HistoryEntry(
+                    step=self.step_counter,
+                    transition_id=result.transition_id,
+                    line=None,
+                    produced_places=[],
+                )
+                self.history.append(entry)
+                return entry
+            self.step_counter += 1
+            produced = self._produced_places(result.transition_id)
             entry = HistoryEntry(
                 step=self.step_counter,
                 transition_id=result.transition_id,
                 line=None,
-                produced_places=[],
+                produced_places=produced,
             )
             self.history.append(entry)
             return entry

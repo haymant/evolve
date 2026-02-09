@@ -310,8 +310,8 @@ class PNMLDAPServer:
             self._terminate()
             return
         if self.ignore_breakpoints_once:
-            self._terminate()
-            return
+            # Allow one continue to pass the previous breakpoint.
+            self.ignore_breakpoints_once = False
         buf = io.StringIO()
         with redirect_stdout(buf):
             entry = self.engine.continue_run()

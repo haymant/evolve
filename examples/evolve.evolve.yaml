@@ -1,0 +1,303 @@
+pnml:
+  net:
+    - id: evolve_loop_example
+      type: https://evolve.dev/pnml/hlpn/evolve-2009
+      page:
+        - id: page1
+          place:
+            - id: p_start
+              name: { text: START }
+              evolve:
+                initialTokens:
+                  - value: "start"
+            - id: p_ideation
+              name: { text: Ideation }
+            - id: p_generated_pnml
+              name: { text: Generated PNML }
+            - id: p_valid
+              name: { text: Validated }
+            - id: p_code
+              name: { text: Generated Code }
+            - id: p_run
+              name: { text: Run Result }
+            - id: p_trace
+              name: { text: Run Trace }
+            - id: p_git
+              name: { text: Versioned }
+            - id: p_end
+              name: { text: END }
+          transition:
+            - id: t_input
+              name: { text: "Input Ideation" }
+              evolve:
+                kind: manual
+                inscriptions:
+                  - id: in_input
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      ctx = token if isinstance(token, dict) else {"prompt": "Provide ideation or type EXIT to stop"}
+                      return vscode_bridge.participant_async("IdeationForm", ctx)
+            - id: t_ideation_exit
+              name: { text: "Exit from Ideation" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_ideation_exit_guard
+                    language: python
+                    kind: guard
+                    source: inline
+                    code: |
+                      payload = token if isinstance(token, dict) else {}
+                      message = payload.get("message") if isinstance(payload, dict) else None
+                      if isinstance(message, str):
+                        try:
+                          payload = __import__("json").loads(message)
+                        except Exception:
+                          payload = {}
+                      elif isinstance(message, dict):
+                        payload = message
+                      mode = payload.get("mode")
+                      return (mode == "ideation" and payload.get("ideation", {}).get("goal", "").strip().lower() == "exit") or (mode == "exit")
+            - id: t_generate_pnml
+              name: { text: "Generate PNML" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_generate_pnml_guard
+                    language: python
+                    kind: guard
+                    source: inline
+                    code: |
+                      payload = token if isinstance(token, dict) else {}
+                      message = payload.get("message") if isinstance(payload, dict) else None
+                      if isinstance(message, str):
+                        try:
+                          payload = __import__("json").loads(message)
+                        except Exception:
+                          payload = {}
+                      elif isinstance(message, dict):
+                        payload = message
+                      mode = payload.get("mode")
+                      return mode == "ideation" and ("ideation" in payload or "goal" in payload)
+                  - id: in_generate_pnml_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      payload = token if isinstance(token, dict) else {}
+                      message = payload.get("message") if isinstance(payload, dict) else None
+                      if isinstance(message, str):
+                        try:
+                          payload = __import__("json").loads(message)
+                        except Exception:
+                          payload = {}
+                      elif isinstance(message, dict):
+                        payload = message
+                      if "ideation" not in payload and "goal" in payload:
+                        payload = {"mode": payload.get("mode", "ideation"), "ideation": payload}
+                      try:
+                        from enginepy import pnml_generator
+                      except Exception:
+                        import pnml_generator
+                      return {
+                        "pnml": pnml_generator.from_ideation(payload.get("ideation", {})),
+                        "_drop_moved_tokens": True,
+                      }
+            - id: t_apply_selection
+              name: { text: "Apply Selection" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_apply_selection_guard
+                    language: python
+                    kind: guard
+                    source: inline
+                    code: |
+                      payload = token if isinstance(token, dict) else {}
+                      message = payload.get("message") if isinstance(payload, dict) else None
+                      if isinstance(message, str):
+                        try:
+                          payload = __import__("json").loads(message)
+                        except Exception:
+                          payload = {}
+                      elif isinstance(message, dict):
+                        payload = message
+                      return payload.get("mode") == "selection" and payload.get("selection") is not None
+                  - id: in_apply_selection_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      payload = token if isinstance(token, dict) else {}
+                      message = payload.get("message") if isinstance(payload, dict) else None
+                      if isinstance(message, str):
+                        try:
+                          payload = __import__("json").loads(message)
+                        except Exception:
+                          payload = {}
+                      elif isinstance(message, dict):
+                        payload = message
+                      result = selection_applier.apply_to_code(payload.get("selection"))
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+            - id: t_validate
+              name: { text: "Validate PNML" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_validate_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      pnml = token.get("pnml") if isinstance(token, dict) else token
+                      ok, message = pnml_validator.validate(pnml or "")
+                      return {
+                        "pnml": pnml,
+                        "validation": {"ok": ok, "message": message},
+                        "_drop_moved_tokens": True,
+                      }
+            - id: t_generate_code
+              name: { text: "Generate Code" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_generate_code_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      pnml = token.get("pnml") if isinstance(token, dict) else token
+                      result = codegen.generate(pnml or "")
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+            - id: t_run
+              name: { text: "Run in venv" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_run_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      result = runtime.run_in_venv(token.get('code',{}))
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+            - id: t_collect_trace
+              name: { text: "Collect Trace" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_collect_trace_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      result = trace_collector.collect(token.get('run_id'))
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+            - id: t_evaluate
+              name: { text: "Evaluate & Classify" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_evaluate_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      result = evaluator.evaluate(token.get('trace',{}))
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+            - id: t_commit
+              name: { text: "Commit & Branch" }
+              evolve:
+                kind: compute
+                inscriptions:
+                  - id: in_commit_expr
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: async
+                    code: |
+                      result = vcs.commit_branch('evolve/'+token.get('workflow','unnamed'), token.get('metadata',{}))
+                      if isinstance(result, dict):
+                        result["_drop_moved_tokens"] = True
+                      return result
+          arc:
+            - id: a1
+              source: p_start
+              target: t_input
+            - id: a2
+              source: t_input
+              target: p_ideation
+            - id: a2b
+              source: p_ideation
+              target: t_ideation_exit
+            - id: a3
+              source: p_ideation
+              target: t_apply_selection
+            - id: a4
+              source: t_apply_selection
+              target: p_code
+            - id: a5
+              source: p_ideation
+              target: t_generate_pnml
+            - id: a6
+              source: t_generate_pnml
+              target: p_generated_pnml
+            - id: a7
+              source: p_generated_pnml
+              target: t_validate
+            - id: a8
+              source: t_validate
+              target: p_valid
+            - id: a9
+              source: p_valid
+              target: t_generate_code
+            - id: a10
+              source: t_generate_code
+              target: p_code
+            - id: a11
+              source: p_code
+              target: t_run
+            - id: a12
+              source: t_run
+              target: p_run
+            - id: a13
+              source: p_run
+              target: t_collect_trace
+            - id: a14
+              source: t_collect_trace
+              target: p_trace
+            - id: a15
+              source: p_trace
+              target: t_evaluate
+            - id: a16
+              source: t_evaluate
+              target: p_ideation
+            - id: a17
+              source: p_code
+              target: t_commit
+            - id: a18
+              source: t_commit
+              target: p_git
+            - id: a19
+              source: t_ideation_exit
+              target: p_end

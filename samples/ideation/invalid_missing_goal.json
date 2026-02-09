@@ -1,0 +1,9 @@
+{
+  "constraints": ["Use only HTTP and manual steps"],
+  "kpis": ["time_to_first_run"],
+  "risk_appetite": "moderate",
+  "data_sources": ["user_upload"],
+  "tooling_limits": ["no_network_calls"],
+  "metadata": {"creator": "test-user", "timestamp": "2026-02-08T10:00:00Z"},
+  "mode": "ideation"
+}

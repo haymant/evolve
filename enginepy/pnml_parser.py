@@ -174,7 +174,7 @@ def parse_pnml(text: str) -> Tuple[PNMLNet, List[PlaceIndex]]:
                 stack.append((key, indent))
             else:
                 if current_inscription is not None and _active_section(stack) == "inscriptions":
-                    if key in {"language", "kind", "source", "id", "execMode"}:
+                    if key in {"language", "kind", "source", "id", "execMode", "code"}:
                         if key == "language":
                             current_inscription.language = value.strip()
                         elif key == "kind":
@@ -185,6 +185,9 @@ def parse_pnml(text: str) -> Tuple[PNMLNet, List[PlaceIndex]]:
                             current_inscription.id = value.strip()
                         elif key == "execMode":
                             current_inscription.exec_mode = value.strip()
+                        elif key == "code":
+                            # Inline single-line code value
+                            current_inscription.code = _parse_scalar(value)
                         _sync_inscription_owner(net, current_inscription, current_net_id, current_transition_id, current_arc, current_inscription_owner)
                 
                 if _active_section(stack) == "arc" and current_arc:

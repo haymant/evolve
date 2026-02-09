@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evolve.dev/schemas/ideation.spec.json",
+  "title": "IdeationSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal", "mode"],
+  "properties": {
+    "goal": {"type": "string", "minLength": 1},
+    "constraints": {"type": "array", "items": {"type": "string"}},
+    "kpis": {"type": "array", "items": {"type": "string"}},
+    "risk_appetite": {"type": "string"},
+    "data_sources": {"type": "array", "items": {"type": "string"}},
+    "tooling_limits": {"type": "array", "items": {"type": "string"}},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "creator": {"type": "string"},
+        "timestamp": {"type": "string"}
+      }
+    },
+    "mode": {"type": "string", "enum": ["ideation", "selection", "exit"]}
+  }
+}
