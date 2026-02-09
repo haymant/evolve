@@ -3,32 +3,35 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
+from . import runtime_runner
+
 
 _RUNS: Dict[str, Dict[str, Any]] = {}
 
 
 def run_in_venv(code: Any) -> Dict[str, Any]:
-    """Pretend to run code and return a run identifier."""
-    run_id = f"run-{int(time.time() * 1000)}"
-    entry = None
-    files = None
-    if isinstance(code, dict):
-        entry = code.get("entry")
-        files = code.get("files")
-    stdout = "Simulated run"
-    if entry:
-        stdout += f" for {entry}"
-    if isinstance(files, dict) and entry in files:
-        first_line = str(files[entry]).splitlines()[0] if files[entry] else ""
-        if first_line:
-            stdout += f"\n{first_line}"
-    result = {
-        "run_id": run_id,
-        "exit_code": 0,
-        "stdout": stdout,
-        "code": code,
+    """Run code artifacts and return a run identifier."""
+    if not isinstance(code, dict):
+        result = {
+            "run_id": None,
+            "exit_code": 2,
+            "stdout": "",
+            "stderr": "invalid code payload",
+            "code": code,
+            "start_time": None,
+            "end_time": None,
+        }
+        return result
+    artifact = {
+        "entrypoint": code.get("entry") or code.get("entrypoint"),
+        "files": code.get("files", {}),
+        "requirements": code.get("requirements", []),
     }
-    _RUNS[run_id] = result
+    result = runtime_runner.run_in_venv(artifact)
+    if not result.get("run_id"):
+        result["run_id"] = f"run-{int(time.time() * 1000)}"
+    result["code"] = code
+    _RUNS[str(result["run_id"])] = result
     return result
 
 

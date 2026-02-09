@@ -2,20 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .evaluator_interface import EvaluationResult, Evaluator
+
 
 def evaluate(trace: Any) -> Dict[str, Any]:
     """Evaluate a trace and return workflow metadata.
 
     This placeholder preserves the expected token shape for downstream steps.
     """
-    status = "ok"
-    if isinstance(trace, dict):
-        events = trace.get("events")
-        if isinstance(events, list):
-            for event in events:
-                if isinstance(event, dict) and event.get("exit_code") not in (None, 0):
-                    status = "error"
-                    break
+    evaluator = Evaluator()
+    result = evaluator.evaluate(trace if isinstance(trace, dict) else {"trace": trace})
     options: List[Dict[str, str]] = [
         {
             "id": "keep",
@@ -33,9 +29,12 @@ def evaluate(trace: Any) -> Dict[str, Any]:
             "description": "Stop the workflow",
         },
     ]
-    return {
+    payload: Dict[str, Any] = {
+        "action": result.action,
+        "ideation_spec": result.ideation_spec,
+        "reasons": result.reasons or [],
         "mode": "selection",
         "options": options,
-        "workflow": "default",
-        "metadata": {"trace": trace, "status": status},
+        "metadata": {"trace": trace},
     }
+    return payload

@@ -1,0 +1,29 @@
+pnml:
+  net:
+    - id: async_flow
+      page:
+        - id: page1
+          place:
+            - id: p1
+              evolve:
+                initialTokens:
+                  - value: 1
+            - id: p2
+          transition:
+            - id: t1
+              evolve:
+                inscriptions:
+                  - id: i1
+                    language: python
+                    kind: expression
+                    source: inline
+                    execMode: sync
+                    code: |
+                      print('async')
+          arc:
+            - id: a1
+              source: p1
+              target: t1
+            - id: a2
+              source: t1
+              target: p2

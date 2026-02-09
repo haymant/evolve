@@ -14,10 +14,17 @@ class IdeationIntegrationTests(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    def _load_pnml(self, name: str) -> str:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        path = os.path.join(root, "samples", "pnml", name)
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
     def test_ideation_to_pnml(self) -> None:
         payload = self._load_sample("valid_001.json")
         token = to_token(payload)
-        pnml_text = from_ideation(token["ideation"], chat_func=lambda _prompt: "")
+        pnml_sample = self._load_pnml("simple_print.yaml")
+        pnml_text = from_ideation(token["ideation"], chat_func=lambda _prompt: pnml_sample)
         ok, msg = validate(pnml_text)
         self.assertTrue(ok, msg)
 

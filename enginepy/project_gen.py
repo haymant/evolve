@@ -39,13 +39,24 @@ def generate_python_project(yaml_text: str, out_dir: str, source_name: str = "pn
         "ideation_spec.py",
         "selection_applier.py",
         "codegen.py",
+        "codegen_adapter.py",
         "runtime.py",
+        "runtime_runner.py",
         "trace_collector.py",
         "evaluator.py",
+        "evaluator_interface.py",
+        "pnml_updater.py",
         "vcs.py",
+        "policy/__init__.py",
+        "policy/first_version.py",
+        "templates/__init__.py",
+        "templates/registry.py",
+        "trace/__init__.py",
+        "trace/collector.py",
     ):
         src_path = os.path.join(engine_src_dir, name)
         dst_path = os.path.join(local_engine_dir, name)
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
         if os.path.exists(src_path):
             with open(src_path, "r", encoding="utf-8") as src:
                 content = src.read()

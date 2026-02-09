@@ -1,0 +1,7 @@
+id: validate_schema
+node_type: validate
+mode: deterministic
+inscription:
+  language: python
+  kind: expression
+  code: "print('validated')"

@@ -1,0 +1,17 @@
+{
+  "run_id": "run-stable",
+  "transition_results": [
+    {
+      "transitionId": "t_async",
+      "stdout": "ok",
+      "stderr": "",
+      "start": 1,
+      "end": 2,
+      "success": true,
+      "error_type": null
+    }
+  ],
+  "start_time": 1,
+  "end_time": 2,
+  "metadata": {"correctness_rate": 0.99}
+}
