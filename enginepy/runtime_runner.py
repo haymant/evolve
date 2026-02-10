@@ -57,7 +57,20 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
     start = time.time()
     run_id = f"run-{int(start * 1000)}"
 
-    with tempfile.TemporaryDirectory(prefix="evolve_run_") as tmp:
+    # Default preserve behavior may be controlled via options or environment.
+    preserve_tmp = bool(opts.get("preserve_tmp", os.environ.get("EVOLVE_PRESERVE_RUNS") == "1"))
+    tmp = None
+
+    # Use a deletable TemporaryDirectory unless caller asked to preserve it.
+    if preserve_tmp:
+        tmp = tempfile.mkdtemp(prefix="evolve_run_")
+        tmp_owner_created = True
+    else:
+        tmp_context = tempfile.TemporaryDirectory(prefix="evolve_run_")
+        tmp = tmp_context.name
+        tmp_owner_created = False
+
+    try:
         for rel_path, content in files.items():
             abs_path = os.path.join(tmp, rel_path)
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
@@ -74,14 +87,23 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
                 check=False,
             )
             end = time.time()
-            return {
+            # When preserved, also print the location to stderr so the DevTools/Debug Console sees it.
+            if preserve_tmp:
+                try:
+                    print(f"[evolve] preserved run directory: {tmp}", file=sys.stderr)
+                except Exception:
+                    pass
+            result = {
                 "run_id": run_id,
                 "stdout": completed.stdout,
                 "stderr": completed.stderr,
                 "exit_code": completed.returncode,
                 "start_time": start,
                 "end_time": end,
+                "tmp_dir": tmp,
+                "preserved": preserve_tmp,
             }
+            return result
         except subprocess.TimeoutExpired:
             end = time.time()
             return {
@@ -91,4 +113,13 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
                 "exit_code": 124,
                 "start_time": start,
                 "end_time": end,
+                "tmp_dir": tmp,
+                "preserved": preserve_tmp,
             }
+    finally:
+        # Clean up the temporary directory if we created a TemporaryDirectory context
+        if not preserve_tmp and not tmp_owner_created:
+            try:
+                tmp_context.cleanup()
+            except Exception:
+                pass

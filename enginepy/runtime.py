@@ -9,8 +9,13 @@ from . import runtime_runner
 _RUNS: Dict[str, Dict[str, Any]] = {}
 
 
-def run_in_venv(code: Any) -> Dict[str, Any]:
-    """Run code artifacts and return a run identifier."""
+def run_in_venv(code: Any, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run code artifacts and return a run identifier.
+
+    Options are forwarded to the underlying runner. Recognized options include:
+    - preserve_tmp: bool -> keep the temporary run directory and return its path as `tmp_dir` in the result.
+    - allowlist / timeout_sec etc. passed through.
+    """
     if not isinstance(code, dict):
         result = {
             "run_id": None,
@@ -27,7 +32,7 @@ def run_in_venv(code: Any) -> Dict[str, Any]:
         "files": code.get("files", {}),
         "requirements": code.get("requirements", []),
     }
-    result = runtime_runner.run_in_venv(artifact)
+    result = runtime_runner.run_in_venv(artifact, options)
     if not result.get("run_id"):
         result["run_id"] = f"run-{int(time.time() * 1000)}"
     result["code"] = code

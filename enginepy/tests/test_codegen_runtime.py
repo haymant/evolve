@@ -1,7 +1,10 @@
 import os
+import tempfile
 import unittest
 
+from enginepy import codegen
 from enginepy import codegen_adapter
+from enginepy import project_gen
 from enginepy import runtime_runner
 
 
@@ -14,6 +17,49 @@ class CodeGenRuntimeTests(unittest.TestCase):
         self.assertIn("entrypoint", artifact)
         self.assertIn("files", artifact)
         self.assertIn("main.py", artifact["files"])
+
+    def test_codegen_accepts_inscription_without_id(self) -> None:
+        pnml_text = """
+pnml:
+    net:
+        - id: net1
+            type: "https://evolve.dev/pnml/hlpn/evolve-2009"
+            page:
+                - id: page1
+                    place:
+                        - id: p1
+                            evolve:
+                                initialTokens:
+                                    - value: 1
+                        - id: p2
+                    transition:
+                        - id: t1
+                            evolve:
+                                inscriptions:
+                                    - language: python
+                                        kind: expression
+                                        source: inline
+                                        code: "print('hi')"
+                    arc:
+                        - { id: a1, source: p1, target: t1 }
+                        - { id: a2, source: t1, target: p2 }
+"""
+        artifact = codegen_adapter.generate(pnml_text)
+        content = artifact["files"]["main.py"]
+        self.assertIn("print('hi')", content)
+
+    def test_project_gen_writes_project(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        path = os.path.join(root, "samples", "pnml", "simple_print.yaml")
+        pnml_text = open(path, "r", encoding="utf-8").read()
+        with tempfile.TemporaryDirectory(prefix="evolve_project_") as tmp:
+            module_dir = project_gen.generate_python_project(pnml_text, tmp, source_name="sample")
+            main_path = os.path.join(module_dir, "main.py")
+            inscriptions_path = os.path.join(module_dir, "inscriptions.py")
+            engine_path = os.path.join(module_dir, "enginepy", "pnml_engine.py")
+            self.assertTrue(os.path.exists(main_path))
+            self.assertTrue(os.path.exists(inscriptions_path))
+            self.assertTrue(os.path.exists(engine_path))
 
     def test_runtime_runs_success(self) -> None:
         root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -35,6 +81,74 @@ class CodeGenRuntimeTests(unittest.TestCase):
         }
         result = runtime_runner.run_in_venv(artifact, {"timeout_sec": 0.1})
         self.assertEqual(result["exit_code"], 124)
+
+    def test_runtime_blocks_disallowed_dependency(self) -> None:
+        artifact = {
+            "entrypoint": "main.py",
+            "files": {"main.py": "print('ok')\n"},
+            "requirements": ["requests"],
+        }
+        result = runtime_runner.run_in_venv(artifact, {"allowlist": []})
+        self.assertEqual(result["exit_code"], 3)
+        self.assertIn("blocked dependency", result["stderr"])
+
+    def test_runtime_preserve_tmp_dir(self) -> None:
+        artifact = {
+            "entrypoint": "main.py",
+            "files": {"main.py": "print('persistent')\n"},
+            "requirements": [],
+        }
+        result = runtime_runner.run_in_venv(artifact, {"preserve_tmp": True, "timeout_sec": 5})
+        self.assertEqual(result["exit_code"], 0)
+        self.assertTrue(result.get("preserved"))
+        tmp = result.get("tmp_dir")
+        self.assertTrue(tmp and __import__("os").path.exists(tmp))
+        main_path = __import__("os").path.join(tmp, "main.py")
+        self.assertTrue(__import__("os").path.exists(main_path))
+        content = open(main_path, "r", encoding="utf-8").read()
+        self.assertIn("persistent", content)
+        # cleanup
+        import shutil
+
+        shutil.rmtree(tmp)
+    
+    def test_runtime_preserve_tmp_via_env(self) -> None:
+        prev = __import__("os").environ.get("EVOLVE_PRESERVE_RUNS")
+        __import__("os").environ["EVOLVE_PRESERVE_RUNS"] = "1"
+        try:
+            artifact = {
+                "entrypoint": "main.py",
+                "files": {"main.py": "print('env_persistent')\n"},
+                "requirements": [],
+            }
+            result = runtime_runner.run_in_venv(artifact, None)
+            self.assertEqual(result["exit_code"], 0)
+            self.assertTrue(result.get("preserved"))
+            tmp = result.get("tmp_dir")
+            self.assertTrue(tmp and __import__("os").path.exists(tmp))
+            main_path = __import__("os").path.join(tmp, "main.py")
+            self.assertTrue(__import__("os").path.exists(main_path))
+            content = open(main_path, "r", encoding="utf-8").read()
+            self.assertIn("env_persistent", content)
+            # cleanup
+            import shutil
+            shutil.rmtree(tmp)
+        finally:
+            if prev is None:
+                __import__("os").environ.pop("EVOLVE_PRESERVE_RUNS", None)
+            else:
+                __import__("os").environ["EVOLVE_PRESERVE_RUNS"] = prev
+    def test_codegen_includes_run_metadata(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        path = os.path.join(root, "samples", "pnml", "simple_print.yaml")
+        pnml_text = open(path, "r", encoding="utf-8").read()
+        payload = codegen.generate(pnml_text)
+        code = payload.get("code", {})
+        run = code.get("run", {})
+        self.assertEqual(code.get("entry"), "main.py")
+        self.assertEqual(run.get("entrypoint"), "main.py")
+        self.assertEqual(run.get("cwd"), ".")
+        self.assertEqual(run.get("command"), ["python", "main.py"])
 
 
 if __name__ == "__main__":

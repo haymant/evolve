@@ -57,7 +57,8 @@ class PNMLNet:
 
 
 _KEY_RE = re.compile(r"^([A-Za-z0-9_]+)\s*:\s*(.*)$")
-_LIST_ID_RE = re.compile(r"^-\s*id:\s*([A-Za-z0-9_\-]+)\s*$")
+_LIST_ID_RE = re.compile(r"^-\s*id:\s*['\"]?([A-Za-z0-9_\-]+)['\"]?\s*$")
+_LIST_KV_RE = re.compile(r"^-\s*([A-Za-z0-9_]+)\s*:\s*(.*)$")
 _LIST_VALUE_RE = re.compile(r"^-\s*value:\s*(.+)$")
 
 
@@ -226,6 +227,26 @@ def parse_pnml(text: str) -> Tuple[PNMLNet, List[PlaceIndex]]:
                 current_arc = Arc(id=item_id)
                 net.arcs.append(current_arc)
                 continue
+
+        list_kv_match = _LIST_KV_RE.match(stripped)
+        if list_kv_match and _active_section(stack) == "inscriptions":
+            key, value = list_kv_match.groups()
+            current_inscription = Inscription()
+            current_inscription_owner = _active_section(stack[:-1])
+            if key == "language":
+                current_inscription.language = value.strip()
+            elif key == "kind":
+                current_inscription.kind = value.strip()
+            elif key == "source":
+                current_inscription.source = value.strip()
+            elif key == "id":
+                current_inscription.id = value.strip()
+            elif key == "execMode":
+                current_inscription.exec_mode = value.strip()
+            elif key == "code":
+                current_inscription.code = _parse_scalar(value)
+            _sync_inscription_owner(net, current_inscription, current_net_id, current_transition_id, current_arc, current_inscription_owner)
+            continue
 
         value_match = _LIST_VALUE_RE.match(stripped)
         if value_match and _active_section(stack) == "initialTokens" and current_place_id:

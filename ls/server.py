@@ -43,7 +43,7 @@ class LSPServer:
         capabilities = {
             "textDocumentSync": 1,
             "documentSymbolProvider": True,
-            "executeCommandProvider": {"commands": ["evolve.places", "evolve.generatePython"]},
+            "executeCommandProvider": {"commands": ["evolve.places", "evolve.generatePython", "evolve.setPreserveRunDirs"]},
         }
         self._send_response(message, {"capabilities": capabilities})
 
@@ -118,6 +118,14 @@ class LSPServer:
                     out_dir = os.path.join(workspace, ".vscode", "evolve_py")
                     module_dir = generate_python_project(text, out_dir, source_name=base)
             self._send_response(message, {"moduleDir": module_dir})
+        elif command == "evolve.setPreserveRunDirs":
+            args = params.get("arguments", [{}])[0] or {}
+            preserve = bool(args.get("preserve", False))
+            if preserve:
+                os.environ["EVOLVE_PRESERVE_RUNS"] = "1"
+            else:
+                os.environ.pop("EVOLVE_PRESERVE_RUNS", None)
+            self._send_response(message, {"preserve": preserve})
         else:
             self._send_response(message, None)
 

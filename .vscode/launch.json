@@ -11,7 +11,8 @@
         "--extensionDevelopmentPath=${workspaceFolder}/editor"
       ],
       "env": {
-        "PNETS_DAP_WAIT_FOR_ATTACH": "1"
+        "PNETS_DAP_WAIT_FOR_ATTACH": "1",
+        "EVOLVE_PRESERVE_RUNS": "1"
       },
       "outFiles": [
         "${workspaceFolder}/editor/dist/**/*.js"

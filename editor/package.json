@@ -13,6 +13,7 @@
   "activationEvents": [
     "onLanguage:yaml",
     "onCommand:evolve.openGraphEditor",
+    "onCommand:evolve.generateMermaidFromPnml",
     "onCommand:evolve.listPendingOperations",
     "onCommand:evolve.resumeForm",
     "onCommand:evolve.cancelOperation",
@@ -24,6 +25,10 @@
       {
         "command": "evolve.openGraphEditor",
         "title": "EVOLVE: Open Graph Editor"
+      },
+      {
+        "command": "evolve.generateMermaidFromPnml",
+        "title": "EVOLVE: Generate Mermaid Diagram"
       },
       {
         "command": "evolve.toggleBreakpoint",
@@ -52,6 +57,10 @@
           "light": "media/icons/chevron-down.svg",
           "dark": "media/icons/chevron-down-dark.svg"
         }
+      },
+      {
+        "command": "evolve.togglePreserveRunDirs",
+        "title": "EVOLVE: Toggle Keep Run Dirs"
       },
       {
         "command": "evolve.openInscriptionEditor",
@@ -97,6 +106,20 @@
             "light": "media/icons/chevron-down.svg",
             "dark": "media/icons/chevron-down-dark.svg"
           }
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "evolve.generateMermaidFromPnml",
+          "when": "resourceFilename =~ /.*\\.(pnml|evolve)\\.yaml$/",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "evolve.generateMermaidFromPnml",
+          "when": "resourceFilename =~ /.*\\.(pnml|evolve)\\.yaml$/",
+          "group": "navigation"
         }
       ]
     },
@@ -159,6 +182,11 @@
           "type": "number",
           "default": 0,
           "description": "Fixed port for run-mode bridge. Use 0 to select a random available port."
+        },
+        "evolve.preserveRunDirs": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, keep temporary run directories and print their paths so you can inspect generated projects and artifacts."
         }
       }
     },

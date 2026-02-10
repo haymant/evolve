@@ -1,4 +1,5 @@
 import * as path from "path";
+import * as fs from "fs";
 import * as vscode from "vscode";
 import * as http from "http";
 import * as crypto from "crypto";
@@ -348,6 +349,77 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
   );
+
+  const getSchemaCmd = vscode.commands.registerCommand('evolve.getPnmlSchema', async () => {
+    const schemaText = await readTextFile(schemaPath);
+    return { schema: schemaText };
+  });
+
+  const generateMermaidCmd = vscode.commands.registerCommand('evolve.generateMermaidFromPnml', async (uri?: vscode.Uri) => {
+    const doc = await resolvePnmlDocument(uri);
+    if (!doc) {
+      vscode.window.showInformationMessage('No PNML/YAML file selected.');
+      return;
+    }
+    const pnmlText = doc.getText();
+    if (!pnmlText.trim()) {
+      vscode.window.showInformationMessage('The PNML file is empty.');
+      return;
+    }
+
+    const available = await isCopilotAvailable();
+    if (!available) {
+      vscode.window.showErrorMessage('Copilot chat model is not available.');
+      return;
+    }
+
+    const model = await selectCopilotModel({});
+    if (!model) {
+      vscode.window.showErrorMessage('No Copilot chat model found.');
+      return;
+    }
+
+    const systemPrompt = await loadMermaidSystemPrompt(context);
+    const userPrompt = buildMermaidUserPrompt(pnmlText);
+    const messages: any[] = [];
+    const lm = (vscode as any).LanguageModelChatMessage;
+    if (lm?.System) {
+      messages.push(lm.System(systemPrompt));
+    } else {
+      messages.push(lm.User(`System prompt:\n${systemPrompt}`));
+    }
+    messages.push(lm.User(userPrompt));
+
+    const tokenSource = new (vscode as any).CancellationTokenSource();
+    try {
+      const response = await model.sendRequest(messages, {}, tokenSource.token);
+      let text = '';
+      for await (const fragment of response.text) {
+        text += fragment;
+      }
+      const output = normalizeMermaidOutput(text);
+      // Open as a named untitled Markdown document so it is visible and easy to save.
+      const base = path.basename(doc.uri.fsPath, path.extname(doc.uri.fsPath));
+      const untitledName = `${base}.diagram.md`;
+      const outUri = vscode.Uri.parse(`untitled:${untitledName}`);
+      let outDoc: vscode.TextDocument;
+      try {
+        // Create named untitled doc and insert content so the tab shows the filename
+        outDoc = await vscode.workspace.openTextDocument(outUri);
+        const edit = new (vscode as any).WorkspaceEdit();
+        edit.insert(outUri, new (vscode as any).Position(0, 0), output);
+        await vscode.workspace.applyEdit(edit);
+      } catch (err) {
+        // Fallback to untitled content-based doc
+        outDoc = await vscode.workspace.openTextDocument({ content: output, language: 'markdown' });
+      }
+      await vscode.window.showTextDocument(outDoc, { preview: false });
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Mermaid generation failed: ${err?.message || String(err)}`);
+    } finally {
+      tokenSource.dispose();
+    }
+  });
 
   // Command to toggle a breakpoint at the current cursor line. Restricted to .pnml.yaml and .evolve.yaml files.
   const allowedBreakpointFile = (uri: any) => {
@@ -748,6 +820,20 @@ export function activate(context: vscode.ExtensionContext): void {
     if (runBridgeEnabled) {
       runBridgeEnv = await ensureRunBridge();
     }
+
+    // Honor the preserveRunDirs setting: add EVOLVE_PRESERVE_RUNS to run environment
+    const preserve = vscode.workspace.getConfiguration('evolve').get<boolean>('preserveRunDirs', false);
+    if (preserve) {
+      runBridgeEnv = { ...runBridgeEnv, EVOLVE_PRESERVE_RUNS: '1' };
+    }
+    if (client) {
+      try {
+        await client.sendRequest('workspace/executeCommand', { command: 'evolve.setPreserveRunDirs', arguments: [{ preserve }] });
+      } catch (err) {
+        console.warn('Failed to notify LSP of preserve setting before run:', err);
+      }
+    }
+
     let moduleDir = '';
     if (client) {
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -777,7 +863,22 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showInformationMessage('Open a *.pnml.yaml or *.evolve.yaml file to debug.');
       return;
     }
+
+    // Propagate preserve setting into debug env so debug runs also preserve dirs when enabled
+    const preserve = vscode.workspace.getConfiguration('evolve').get<boolean>('preserveRunDirs', false);
+    let env: { [key: string]: string } | undefined = undefined;
+    if (preserve) {
+      env = { EVOLVE_PRESERVE_RUNS: '1' };
+    }
+
     if (client) {
+      // Notify LSP server about preserve setting so runtime.run_in_venv honors it
+      try {
+        await client.sendRequest('workspace/executeCommand', { command: 'evolve.setPreserveRunDirs', arguments: [{ preserve }] });
+      } catch (err) {
+        console.warn('Failed to notify LSP of preserve setting before debug:', err);
+      }
+
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       const result = await client.sendRequest('workspace/executeCommand', {
         command: 'evolve.generatePython',
@@ -792,7 +893,8 @@ export function activate(context: vscode.ExtensionContext): void {
       type: 'evolve-pnml',
       name: 'Debug EVOLVE PNML',
       request: 'launch',
-      program: editor.document.uri.fsPath
+      program: editor.document.uri.fsPath,
+      env
     });
   });
 
@@ -802,13 +904,23 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showInformationMessage('Open a *.pnml.yaml or *.evolve.yaml file to run.');
       return;
     }
+    const preserve = vscode.workspace.getConfiguration('evolve').get<boolean>('preserveRunDirs', false);
     const pick = await vscode.window.showQuickPick(
       [
         { label: '$(play) Run EVOLVE PNML', id: 'run' },
-        { label: '$(debug-alt) Debug EVOLVE PNML', id: 'debug' }
+        { label: '$(debug-alt) Debug EVOLVE PNML', id: 'debug' },
+        { label: `${preserve ? '$(check) ' : ''}Keep run dirs`, id: 'togglePreserve' }
       ],
       { placeHolder: 'Select action' }
     );
+    if (!pick) return;
+    if (pick.id === 'run') {
+      await vscode.commands.executeCommand('evolve.runNet');
+    } else if (pick.id === 'debug') {
+      await vscode.commands.executeCommand('evolve.debugNet');
+    } else if (pick.id === 'togglePreserve') {
+      await vscode.commands.executeCommand('evolve.togglePreserveRunDirs');
+    }
     if (!pick) return;
     if (pick.id === 'run') {
       await vscode.commands.executeCommand('evolve.runNet');
@@ -817,8 +929,26 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const togglePreserveCmd = vscode.commands.registerCommand('evolve.togglePreserveRunDirs', async () => {
+    const cfg = vscode.workspace.getConfiguration('evolve');
+    const cur = cfg.get<boolean>('preserveRunDirs', false);
+    const next = !cur;
+    await cfg.update('preserveRunDirs', next, vscode.ConfigurationTarget.Global);
+    // Inform the language server so long-running Python process honors the setting
+    if (client) {
+      try {
+        await client.sendRequest('workspace/executeCommand', { command: 'evolve.setPreserveRunDirs', arguments: [{ preserve: next }] });
+      } catch (err) {
+        console.warn('Failed to notify LSP of preserve setting:', err);
+      }
+    }
+    vscode.window.showInformationMessage(`EVOLVE: Keep run dirs ${next ? 'enabled' : 'disabled'}`);
+  });
+
   context.subscriptions.push(
     openGraphEditor,
+    getSchemaCmd,
+    generateMermaidCmd,
     toggleBpCmd,
     bpListener,
     inscriptionFileSystem,
@@ -827,7 +957,8 @@ export function activate(context: vscode.ExtensionContext): void {
     codeLensProvider,
     runNetCmd,
     debugNetCmd,
-    showRunMenuCmd
+    showRunMenuCmd,
+    togglePreserveCmd
     // no save listener needed; writeFile handles updates
   );
 
@@ -1518,6 +1649,86 @@ async function handleShowMessage(params: any): Promise<any> {
   }
   
   return {};
+}
+
+async function readTextFile(filePath: string): Promise<string> {
+  return await fs.promises.readFile(filePath, 'utf8');
+}
+
+function isPnmlFile(uri: vscode.Uri | undefined): boolean {
+  if (!uri) return false;
+  const rawPath = (uri.fsPath || uri.path || '').toString().toLowerCase();
+  return rawPath.endsWith('.pnml.yaml') || rawPath.endsWith('.evolve.yaml');
+}
+
+async function resolvePnmlDocument(uri?: vscode.Uri): Promise<vscode.TextDocument | undefined> {
+  if (uri && isPnmlFile(uri)) {
+    return await vscode.workspace.openTextDocument(uri);
+  }
+  const editor = vscode.window.activeTextEditor;
+  if (editor && isPnmlFile(editor.document.uri)) {
+    return editor.document;
+  }
+  return undefined;
+}
+
+async function loadMermaidSystemPrompt(context: vscode.ExtensionContext): Promise<string> {
+  const fallback = [
+    'You are a Petri Net visualization assistant. Given PNML YAML input, generate a Mermaid flowchart that represents the Petri Net structure.',
+    '',
+    'Rules:',
+    '1. Places are rendered as ([place_id]) (stadium shape = circle).',
+    '2. Transitions are rendered as [transition_id] (rectangle).',
+    '3. Arcs connect places to transitions or transitions to places.',
+    '4. Use subgraph to group the net with a descriptive title.',
+    '5. Add a legend comment explaining the notation.',
+    '6. Wrap all labels in double quotes and use <br> instead of \\n inside the quoted string to indicate line breaks and escape any double quotes inside a label with \\\" to prevent Mermaid parse errors.',
+    '',
+    'Output format:',
+    '```mermaid',
+    'flowchart LR',
+    '  subgraph NetName["Net Title"]',
+    '    %% Places: ([id]) = circle',
+    '    %% Transitions: [id] = rectangle',
+    '  end',
+    '```'
+  ].join('\n');
+
+  const kbPath = path.join(context.extensionPath, '..', 'kb', 'guide', 'AgenticFlow.md');
+  try {
+    const content = await readTextFile(kbPath);
+    const section = extractPromptSection(content, '## Prompt: PNML YAML to Mermaid Petri Net Diagram');
+    return section || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function extractPromptSection(content: string, heading: string): string {
+  const start = content.indexOf(heading);
+  if (start < 0) return '';
+  const rest = content.slice(start + heading.length);
+  const nextHeading = rest.search(/\n##\s+/);
+  const section = nextHeading >= 0 ? rest.slice(0, nextHeading) : rest;
+  return `${heading}\n${section}`.trim();
+}
+
+function buildMermaidUserPrompt(pnmlText: string): string {
+  return [
+    'Generate the Mermaid diagram for this PNML YAML. Follow the system rules exactly and output only the Mermaid diagram.',
+    '',
+    'PNML YAML:',
+    '```yaml',
+    pnmlText,
+    '```'
+  ].join('\n');
+}
+
+function normalizeMermaidOutput(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.includes('```mermaid')) return trimmed;
+  return ['```mermaid', trimmed, '```'].join('\n');
 }
 
 export function __getPendingOpsStore(): PendingOpsStore | undefined {
