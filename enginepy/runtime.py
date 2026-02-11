@@ -32,6 +32,26 @@ def run_in_venv(code: Any, options: Optional[Dict[str, Any]] = None) -> Dict[str
         "files": code.get("files", {}),
         "requirements": code.get("requirements", []),
     }
+    # Include PNML text in the artifact if provided by the code payload so the
+    # runner may optionally preserve it alongside run files.
+    if isinstance(code, dict) and code.get("pnml"):
+        artifact["pnml"] = code.get("pnml")
+
+    # If the generated code includes run metadata with a preserve_dir, forward
+    # that into the runner options so preserved runs go under the project tree.
+    if isinstance(code, dict):
+        run_meta = code.get("run") or {}
+        preserve_dir = run_meta.get("preserve_dir")
+        if preserve_dir:
+            opts = dict(options or {})
+            if "preserve_dir" not in opts:
+                opts["preserve_dir"] = preserve_dir
+            options = opts
+        # Forward explicit args from the code payload or run metadata.
+        if "args" in code:
+            artifact["args"] = code.get("args")
+        elif "args" in run_meta:
+            artifact["args"] = run_meta.get("args")
     result = runtime_runner.run_in_venv(artifact, options)
     if not result.get("run_id"):
         result["run_id"] = f"run-{int(time.time() * 1000)}"

@@ -32,6 +32,7 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
     entrypoint = code_artifact.get("entrypoint")
     files = code_artifact.get("files")
     requirements = code_artifact.get("requirements") or []
+    args = code_artifact.get("args") or []
 
     if not entrypoint or not isinstance(files, dict):
         return {
@@ -63,8 +64,23 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
 
     # Use a deletable TemporaryDirectory unless caller asked to preserve it.
     if preserve_tmp:
-        tmp = tempfile.mkdtemp(prefix="evolve_run_")
-        tmp_owner_created = True
+        # Allow callers to specify a base directory to place preserved runs under
+        # (e.g., a project workspace's `.vscode/pnmlGen`). If provided, create the
+        # base dir and place the run directory there. Falls back to system temp.
+        preserve_base = opts.get("preserve_dir") or os.environ.get("EVOLVE_PRESERVE_BASE")
+        if preserve_base:
+            try:
+                os.makedirs(preserve_base, exist_ok=True)
+                tmp = tempfile.mkdtemp(prefix="evolve_run_", dir=preserve_base)
+                tmp_owner_created = True
+            except Exception:
+                # If creating under preserve_base fails for any reason, fall back
+                # to the default behaviour of creating a temp dir in /tmp.
+                tmp = tempfile.mkdtemp(prefix="evolve_run_")
+                tmp_owner_created = True
+        else:
+            tmp = tempfile.mkdtemp(prefix="evolve_run_")
+            tmp_owner_created = True
     else:
         tmp_context = tempfile.TemporaryDirectory(prefix="evolve_run_")
         tmp = tmp_context.name
@@ -76,10 +92,26 @@ def run_in_venv(code_artifact: Dict[str, Any], options: Optional[Dict[str, Any]]
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8") as f:
                 f.write(str(content))
+
+        # If we're preserving the run directory and a source PNML text was
+        # provided as part of the artifact, write it to the preserved directory
+        # so it's available alongside the generated project/run files.
+        if preserve_tmp and code_artifact.get("pnml"):
+            try:
+                pnml_path = os.path.join(tmp, "pnml.yaml")
+                with open(pnml_path, "w", encoding="utf-8") as pf:
+                    pf.write(str(code_artifact.get("pnml")))
+            except Exception:
+                # Do not fail the run for PNML write errors; just continue.
+                pass
+
         entry_path = os.path.join(tmp, entrypoint)
         try:
+            cmd = [sys.executable, entry_path]
+            if isinstance(args, (list, tuple)):
+                cmd.extend(str(a) for a in args)
             completed = subprocess.run(
-                [sys.executable, entry_path],
+                cmd,
                 cwd=tmp,
                 capture_output=True,
                 text=True,

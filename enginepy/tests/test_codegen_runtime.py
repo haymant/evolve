@@ -6,6 +6,7 @@ from enginepy import codegen
 from enginepy import codegen_adapter
 from enginepy import project_gen
 from enginepy import runtime_runner
+from enginepy import runtime
 
 
 class CodeGenRuntimeTests(unittest.TestCase):
@@ -45,7 +46,7 @@ pnml:
                         - { id: a2, source: t1, target: p2 }
 """
         artifact = codegen_adapter.generate(pnml_text)
-        content = artifact["files"]["main.py"]
+        content = artifact["files"].get("inscriptions.py", "")
         self.assertIn("print('hi')", content)
 
     def test_project_gen_writes_project(self) -> None:
@@ -138,6 +139,58 @@ pnml:
                 __import__("os").environ.pop("EVOLVE_PRESERVE_RUNS", None)
             else:
                 __import__("os").environ["EVOLVE_PRESERVE_RUNS"] = prev
+
+    def test_runtime_preserve_in_project_dir(self) -> None:
+        import os
+        import tempfile
+        import shutil
+
+        artifact = {
+            "entrypoint": "main.py",
+            "files": {"main.py": "print('project_persistent')\n"},
+            "requirements": [],
+        }
+        with tempfile.TemporaryDirectory(prefix="proj_") as proj:
+            # simulate project .vscode/pnmlGen path
+            preserve_base = os.path.join(proj, ".vscode", "pnmlGen")
+            # Simulate codegen attaching run.preserve_dir to the generated code
+            code_payload = {"entry": "main.py", "files": artifact["files"], "requirements": artifact["requirements"], "run": {"preserve_dir": preserve_base}, "pnml": "sample: pnml_content\n"}
+            result = runtime.run_in_venv(code_payload, {"preserve_tmp": True, "timeout_sec": 5})
+            self.assertEqual(result["exit_code"], 0)
+            self.assertTrue(result.get("preserved"))
+            tmp = result.get("tmp_dir")
+            self.assertTrue(tmp and __import__("os").path.exists(tmp))
+            # The preserved tmp dir should be under the project preserve_base
+            self.assertTrue(os.path.commonpath([tmp, preserve_base]) == preserve_base)
+            main_path = os.path.join(tmp, "main.py")
+            self.assertTrue(os.path.exists(main_path))
+            content = open(main_path, "r", encoding="utf-8").read()
+            self.assertIn("project_persistent", content)
+            pnml_path = os.path.join(tmp, "pnml.yaml")
+            self.assertTrue(os.path.exists(pnml_path))
+            pnml_content = open(pnml_path, "r", encoding="utf-8").read()
+            self.assertIn("pnml_content", pnml_content)
+            # cleanup
+            shutil.rmtree(tmp)
+
+    def test_codegen_includes_preserve_dir_from_env(self) -> None:
+        import os
+        prev = os.environ.get("EVOLVE_PRESERVE_BASE")
+        try:
+            with tempfile.TemporaryDirectory(prefix="proj_") as proj:
+                preserve_base = os.path.join(proj, ".vscode", "pnmlGen")
+                os.environ["EVOLVE_PRESERVE_BASE"] = preserve_base
+                path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "samples", "pnml", "simple_print.yaml")
+                pnml_text = open(path, "r", encoding="utf-8").read()
+                payload = codegen.generate(pnml_text)
+                code = payload.get("code", {})
+                run = code.get("run", {})
+                self.assertEqual(run.get("preserve_dir"), preserve_base)
+        finally:
+            if prev is None:
+                os.environ.pop("EVOLVE_PRESERVE_BASE", None)
+            else:
+                os.environ["EVOLVE_PRESERVE_BASE"] = prev
     def test_codegen_includes_run_metadata(self) -> None:
         root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         path = os.path.join(root, "samples", "pnml", "simple_print.yaml")
@@ -148,7 +201,8 @@ pnml:
         self.assertEqual(code.get("entry"), "main.py")
         self.assertEqual(run.get("entrypoint"), "main.py")
         self.assertEqual(run.get("cwd"), ".")
-        self.assertEqual(run.get("command"), ["python", "main.py"])
+        self.assertEqual(run.get("command"), ["python", "main.py", "pnml.yaml"])
+        self.assertEqual(run.get("args"), ["pnml.yaml"])
 
 
 if __name__ == "__main__":

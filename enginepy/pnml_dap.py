@@ -136,6 +136,16 @@ class PNMLDAPServer:
             vscode_bridge._set_bridge(self._bridge)
         
         if self.program and os.path.exists(self.program):
+            # When running under the DAP server, prefer preserved run directories
+            # to be placed under the project workspace (e.g., .vscode/pnmlGen). Set
+            # an environment variable that the runtime honors by default.
+            try:
+                workspace_root = os.path.dirname(os.path.dirname(self.program))
+                preserve_base = os.path.join(workspace_root, ".vscode", "pnmlGen")
+                # Only set if not already present to allow user overrides
+                os.environ.setdefault("EVOLVE_PRESERVE_BASE", preserve_base)
+            except Exception:
+                pass
             with open(self.program, "r", encoding="utf-8") as f:
                 text = f.read()
             self._ensure_inscriptions_registered(self.program, text)
